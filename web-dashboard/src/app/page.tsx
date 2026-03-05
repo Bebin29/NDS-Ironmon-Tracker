@@ -98,7 +98,7 @@ export default function Dashboard() {
 
           {chatOpen && (
             <div className="min-h-[300px] flex-1">
-              <ChatPanel />
+              <ChatPanel deaths={deaths} />
             </div>
           )}
         </div>

@@ -2,12 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { buildSystemPrompt } from "@/lib/chat-context";
 import { getCurrentState } from "@/lib/state-watcher";
-import type { ChatMessage } from "@/lib/types";
+import type { ChatMessage, GraveyardEntry } from "@/lib/types";
 
 export async function POST(req: NextRequest) {
-  const { messages, model } = (await req.json()) as {
+  const { messages, model, deaths } = (await req.json()) as {
     messages: ChatMessage[];
     model?: string;
+    deaths?: GraveyardEntry[];
   };
 
   if (!messages || messages.length === 0) {
@@ -18,7 +19,7 @@ export async function POST(req: NextRequest) {
   }
 
   const state = getCurrentState();
-  const systemPrompt = buildSystemPrompt(state);
+  const systemPrompt = buildSystemPrompt(state, deaths);
 
   const conversationText = messages
     .map((m) => `${m.role === "user" ? "User" : "Assistant"}: ${m.content}`)

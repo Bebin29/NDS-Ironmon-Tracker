@@ -1,9 +1,9 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import type { ChatMessage } from "@/lib/types";
+import type { ChatMessage, GraveyardEntry } from "@/lib/types";
 
-export function useChat(model?: string) {
+export function useChat(model?: string, deaths?: GraveyardEntry[]) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -21,6 +21,7 @@ export function useChat(model?: string) {
           body: JSON.stringify({
             messages: updatedMessages,
             ...(model ? { model } : {}),
+            ...(deaths && deaths.length > 0 ? { deaths } : {}),
           }),
         });
 
@@ -49,7 +50,7 @@ export function useChat(model?: string) {
         setLoading(false);
       }
     },
-    [messages, model]
+    [messages, model, deaths]
   );
 
   const clearChat = useCallback(() => setMessages([]), []);

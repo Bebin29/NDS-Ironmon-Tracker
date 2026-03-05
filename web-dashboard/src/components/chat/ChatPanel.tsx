@@ -9,13 +9,16 @@ import { ChatInput } from "./ChatInput";
 import { ChatSettings } from "./ChatSettings";
 import { LoginScreen } from "./LoginScreen";
 
-export function ChatPanel() {
+import type { GraveyardEntry } from "@/lib/types";
+
+export function ChatPanel({ deaths }: { deaths?: GraveyardEntry[] }) {
   const auth = useAuth();
   const { models } = useModels(auth.authenticated);
   const [selectedModel, setSelectedModel] = useState("");
   const [showSettings, setShowSettings] = useState(false);
   const { messages, loading, sendMessage, clearChat } = useChat(
-    selectedModel || undefined
+    selectedModel || undefined,
+    deaths,
   );
   const scrollRef = useRef<HTMLDivElement>(null);
 

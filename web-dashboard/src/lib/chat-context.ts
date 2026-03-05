@@ -1,11 +1,36 @@
-import type { TrackerState, StatStages } from "./types";
+import type { TrackerState, StatStages, GraveyardEntry } from "./types";
 import { getLevelCap, getNextGymLeader } from "./game-data";
 import { NATURE_NAMES, STATUS_NAMES } from "./types";
 import { getAbilityShortDesc } from "./ability-effects";
 import { getItemShortDesc } from "./item-effects";
 import { getStatStageMult, calculateMoveMatchup, type DamageOptions } from "./damage-calc";
-import { isSTAB } from "./type-effectiveness";
+import { isSTAB, getDefensiveWeaknesses, getAttackMultiplier } from "./type-effectiveness";
 import { analyzeSwitchins } from "./switchin-calc";
+
+const ALL_TYPES = [
+  "NORMAL", "FIRE", "WATER", "GRASS", "ELECTRIC", "ICE",
+  "FIGHTING", "POISON", "GROUND", "FLYING", "PSYCHIC",
+  "BUG", "ROCK", "GHOST", "DRAGON", "DARK", "STEEL",
+];
+
+// Nature stat effects: index = floor(natureId/5) for boost, natureId%5 for penalty
+// 0=ATK, 1=DEF, 2=SPE, 3=SPA, 4=SPD
+const NATURE_STAT_KEYS = ["ATK", "DEF", "SPE", "SPA", "SPD"] as const;
+
+function getNatureEffect(natureId: number): string {
+  const boost = Math.floor(natureId / 5);
+  const penalty = natureId % 5;
+  if (boost === penalty) return "neutral";
+  return `+${NATURE_STAT_KEYS[boost]} -${NATURE_STAT_KEYS[penalty]}`;
+}
+
+function getReturnPower(friendship: number): number {
+  return Math.floor(friendship / 2.5);
+}
+
+function getFrustrationPower(friendship: number): number {
+  return Math.floor((255 - friendship) / 2.5);
+}
 
 function formatStatStages(stages?: StatStages): string {
   if (!stages) return "";
@@ -17,26 +42,30 @@ function formatStatStages(stages?: StatStages): string {
   return parts.length > 0 ? parts.join(", ") : "";
 }
 
-export function buildSystemPrompt(state: TrackerState | null): string {
+export function buildSystemPrompt(state: TrackerState | null, deaths?: GraveyardEntry[]): string {
   if (!state) {
-    return `You are a concise Pokemon Platinum Soul Link Nuzlocke advisor. The tracker is not connected — answer general Platinum strategy questions. Keep answers short and direct.`;
+    return `You are a concise Pokemon Ironmon/Nuzlocke advisor. The tracker is not connected — answer general strategy questions. Keep answers short and direct.`;
   }
 
   const levelCap = getLevelCap(state.badgeCount, state.gameName);
   const nextGym = getNextGymLeader(state.badgeCount, state.gameName);
+  const genLabel = state.gen === 4 ? "Gen 4" : state.gen === 5 ? "Gen 5" : `Gen ${state.gen}`;
 
   const partyLines = state.party
     .map((p) => {
       const hpPct = p.maxHP > 0 ? Math.round((p.curHP / p.maxHP) * 100) : 0;
       const nature = NATURE_NAMES[p.nature] || "???";
+      const natureEffect = getNatureEffect(p.nature);
       const moves = p.moves
         .filter((m) => m.id > 0)
         .map((m) => m.name)
         .join(", ");
+      const levelsToCapDiff = levelCap - p.level;
       const flags = [
         p.curHP === 0 && p.maxHP > 0 ? "DEAD" : null,
-        p.level >= levelCap ? "AT CAP" : null,
         p.level > levelCap ? "OVERLEVEL" : null,
+        p.level === levelCap ? "AT CAP" : null,
+        levelsToCapDiff > 0 && levelsToCapDiff <= 3 ? `${levelsToCapDiff} lvl${levelsToCapDiff > 1 ? "s" : ""} to cap` : null,
       ]
         .filter(Boolean)
         .join(", ");
@@ -44,7 +73,16 @@ export function buildSystemPrompt(state: TrackerState | null): string {
       const abilityStr = abilityNote ? `${p.ability} (${abilityNote})` : p.ability;
       const itemNote = p.heldItem > 0 ? getItemShortDesc(p.heldItem) : null;
       const itemStr = p.heldItemName !== "None" ? (itemNote ? `${p.heldItemName} (${itemNote})` : p.heldItemName) : "None";
-      return `${p.nickname || p.name} (${p.name}) Lv.${p.level} ${p.types.join("/")} | ${hpPct}% HP | ${abilityStr} | ${nature} | Item: ${itemStr} | Moves: ${moves}${flags ? ` [${flags}]` : ""}`;
+
+      // Friendship-based move power
+      const hasReturn = p.moves.some((m) => m.name === "Return");
+      const hasFrustration = p.moves.some((m) => m.name === "Frustration");
+      let friendshipNote = "";
+      if (hasReturn) friendshipNote = ` | Return power: ${getReturnPower(p.friendship)}`;
+      else if (hasFrustration) friendshipNote = ` | Frustration power: ${getFrustrationPower(p.friendship)}`;
+
+      const statsStr = `HP:${p.stats.HP} ATK:${p.stats.ATK} DEF:${p.stats.DEF} SPA:${p.stats.SPA} SPD:${p.stats.SPD} SPE:${p.stats.SPE}`;
+      return `${p.nickname || p.name} (${p.name}) Lv.${p.level} ${p.types.join("/")} | ${hpPct}% HP | ${abilityStr} | ${nature} (${natureEffect}) | Item: ${itemStr} | Stats: ${statsStr} | Moves: ${moves}${friendshipNote}${flags ? ` [${flags}]` : ""}`;
     })
     .join("\n");
 
@@ -80,6 +118,9 @@ export function buildSystemPrompt(state: TrackerState | null): string {
       if (lead.status === 4) ownSpd = Math.floor(ownSpd / 4);
       const speedResult = ownSpd > enemySpd ? "YOU ARE FASTER" : ownSpd < enemySpd ? "ENEMY IS FASTER" : "SPEED TIE";
       battleInfo += ` | Speed: ${speedResult} (${ownSpd} vs ${enemySpd})`;
+
+      // Stat comparison
+      battleInfo += `\nSTAT COMPARISON (you vs enemy): ATK ${lead.stats.ATK} vs ${e.stats.ATK} | DEF ${lead.stats.DEF} vs ${e.stats.DEF} | SPA ${lead.stats.SPA} vs ${e.stats.SPA} | SPD ${lead.stats.SPD} vs ${e.stats.SPD} | SPE ${lead.stats.SPE} vs ${e.stats.SPE}`;
     }
 
     // Enemy moves damage vs your lead
@@ -157,19 +198,77 @@ export function buildSystemPrompt(state: TrackerState | null): string {
     }
   }
 
-  return `You are a concise Pokemon Platinum Soul Link Nuzlocke advisor embedded in a live tracker dashboard.
+  // Team weakness summary
+  const alive = state.party.filter((p) => p.curHP > 0 && p.maxHP > 0 && p.isEgg !== 1);
+  let teamWeaknessInfo = "";
+  if (alive.length > 0) {
+    const weaknessCounts: Record<string, number> = {};
+    for (const p of alive) {
+      for (const w of getDefensiveWeaknesses(p.types)) {
+        weaknessCounts[w.type] = (weaknessCounts[w.type] || 0) + 1;
+      }
+    }
+    const sharedWeaknesses = Object.entries(weaknessCounts)
+      .filter(([, count]) => count >= 2)
+      .sort(([, a], [, b]) => b - a)
+      .map(([type, count]) => `${type} (${count}/${alive.length})`);
+    if (sharedWeaknesses.length > 0) {
+      teamWeaknessInfo = `\nTEAM WEAKNESSES (defensive): ${sharedWeaknesses.join(", ")}`;
+    }
+
+    // Offensive coverage: which types can the team hit super-effectively?
+    const coveredTypes = new Set<string>();
+    for (const p of alive) {
+      for (const move of p.moves) {
+        if (move.id <= 0) continue;
+        const mt = move.type.toUpperCase();
+        for (const defType of ALL_TYPES) {
+          if (getAttackMultiplier(mt, [defType]) > 1) {
+            coveredTypes.add(defType);
+          }
+        }
+      }
+    }
+    const uncovered = ALL_TYPES.filter((t) => !coveredTypes.has(t));
+    if (uncovered.length > 0) {
+      teamWeaknessInfo += `\nCOVERAGE GAPS (no super-effective moves against): ${uncovered.join(", ")}`;
+    }
+  }
+
+  // Graveyard / death history
+  let graveyardInfo = "";
+  if (deaths && deaths.length > 0) {
+    const deathLines = deaths.map((d) => {
+      let line = `${d.nickname && d.nickname !== d.name ? `${d.nickname} (${d.name})` : d.name} Lv.${d.level} at ${d.location}`;
+      if (d.killedBy) {
+        line += ` — killed by ${d.wasWildEncounter ? "wild " : ""}${d.killedBy} Lv.${d.killedByLevel}`;
+      }
+      return line;
+    });
+    graveyardInfo = `\nGRAVEYARD (${deaths.length} deaths):\n${deathLines.join("\n")}`;
+  }
+
+  // Timer
+  const timerH = Math.floor(state.timerSeconds / 3600);
+  const timerM = Math.floor((state.timerSeconds % 3600) / 60);
+  const timerStr = timerH > 0 ? `${timerH}h ${timerM}m` : `${timerM}m`;
+
+  return `You are a concise ${state.gameName} Ironmon/Nuzlocke advisor embedded in a live tracker dashboard.
 
 RULES:
 - Keep answers short (2-4 sentences for simple questions, use bullet points for complex ones).
 - Reference the player's actual Pokemon, moves, and matchups — don't give generic advice.
 - Use markdown formatting: **bold** for Pokemon/move names, bullet lists for options.
 - Don't greet or introduce yourself. Jump straight to the answer.
+- This is ${genLabel}${state.gen === 4 ? " (physical/special split by move, not type)" : ""}.
 - Nuzlocke: fainted = dead. Level cap ${levelCap} (next gym: ${nextGym.name}, ${nextGym.type}-type). Soul Link: linked catches die together.
 
 STATE:
-${state.gameName} | ${state.location} | ${state.badgeCount}/8 badges | ${state.runOver ? "RUN OVER" : "Active"}
+${state.gameName} (${genLabel}) | ${state.location} | ${state.badgeCount}/8 badges | ${state.runOver ? "RUN OVER" : "Active"}
 Level cap: ${levelCap} | Next gym: ${nextGym.name} (${nextGym.type})
-Items: ${items || "none"}${encounterInfo}
+Pokecenter heals: ${state.pokecenterCount}${state.pokecenterCount <= 2 ? " (CRITICAL — very few heals left!)" : state.pokecenterCount <= 5 ? " (low)" : ""}
+Timer: ${timerStr}
+Items: ${items || "none"}${teamWeaknessInfo}${encounterInfo}${graveyardInfo}
 ${battleInfo}
 
 PARTY:
