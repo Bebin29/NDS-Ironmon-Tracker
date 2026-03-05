@@ -8,11 +8,15 @@ import { BattleView } from "@/components/dashboard/BattleView";
 import { NuzlockeTracker } from "@/components/dashboard/NuzlockeTracker";
 import { HealingInventory } from "@/components/dashboard/HealingInventory";
 import { TeamWeaknesses } from "@/components/dashboard/TeamWeaknesses";
+import { RouteEncounters } from "@/components/dashboard/RouteEncounters";
 import { ChatPanel } from "@/components/chat/ChatPanel";
+import { Graveyard } from "@/components/dashboard/Graveyard";
+import { useGraveyard } from "@/hooks/useGraveyard";
 
 export default function Dashboard() {
   const { state, connected } = useTrackerState();
   const [chatOpen, setChatOpen] = useState(true);
+  const { deaths, clearGraveyard } = useGraveyard(state);
 
   if (!state) {
     return (
@@ -51,6 +55,7 @@ export default function Dashboard() {
         location={state.location}
         connected={connected}
         runOver={state.runOver}
+        pokecenterCount={state.pokecenterCount}
       />
 
       {/* Main content */}
@@ -62,19 +67,27 @@ export default function Dashboard() {
               enemy={state.enemy}
               leadPokemon={state.party.find((p) => p.curHP > 0 && p.maxHP > 0)}
               leadStatStages={state.leadStatStages}
+              party={state.party}
             />
           )}
           <PartyPanel
             party={state.party}
             enemy={state.inBattle ? state.enemy : null}
+            badgeCount={state.badgeCount}
+            gameName={state.gameName}
           />
           <TeamWeaknesses party={state.party} />
+          <RouteEncounters
+            encounters={state.encounters}
+            currentLocation={state.location}
+          />
           <HealingInventory items={state.healingItems} />
         </div>
 
         {/* Right sidebar: Nuzlocke + Chat */}
         <div className="flex w-80 shrink-0 flex-col gap-4 overflow-y-auto">
           <NuzlockeTracker state={state} />
+          <Graveyard deaths={deaths} onClear={clearGraveyard} />
 
           <button
             onClick={() => setChatOpen(!chatOpen)}

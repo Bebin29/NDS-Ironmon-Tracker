@@ -16,6 +16,7 @@ import { calculateMoveMatchup, getStatStageMult, type KOChance, type DamageOptio
 import { getAbilityShortDesc } from "@/lib/ability-effects";
 import { getItemShortDesc } from "@/lib/item-effects";
 import { STATUS_NAMES } from "@/lib/types";
+import { analyzeSwitchins, type SwitchinScore } from "@/lib/switchin-calc";
 
 const PRIORITY_MOVES: Record<number, number> = {
   98: 1,    // Quick Attack
@@ -162,14 +163,23 @@ function StatStageIndicator({ stages, label }: { stages?: StatStages; label?: st
   );
 }
 
+const RATING_COLORS: Record<SwitchinScore["rating"], string> = {
+  GOOD: "bg-green-700/80 text-white",
+  OK: "bg-yellow-600/80 text-white",
+  RISKY: "bg-orange-600/80 text-white",
+  BAD: "bg-red-800/80 text-white",
+};
+
 export function BattleView({
   enemy,
   leadPokemon,
   leadStatStages,
+  party,
 }: {
   enemy: EnemyPokemon;
   leadPokemon?: PartyPokemon;
   leadStatStages?: StatStages;
+  party?: PartyPokemon[];
 }) {
   const weaknesses = getDefensiveWeaknesses(enemy.types);
   const resistances = getDefensiveResistances(enemy.types);
@@ -391,6 +401,64 @@ export function BattleView({
               </div>
             </div>
           )}
+
+          {/* Switch-in Advisor */}
+          {(() => {
+            if (!party) return null;
+            const analysis = analyzeSwitchins(party, enemy);
+            if (analysis.candidates.length === 0) return null;
+            const top3 = analysis.candidates.slice(0, 3);
+            return (
+              <div className="mt-3 rounded border border-pine-accent/30 bg-pine-bg/50 p-2">
+                <div className="mb-1 text-[10px] font-bold uppercase text-pine-accent">
+                  Switch-in Advisor
+                </div>
+                <div className="space-y-1.5">
+                  {top3.map((c, i) => {
+                    const isBest = i === 0;
+                    const speedLabel = c.isFaster === true ? "\u25B2 FASTER" : c.isFaster === false ? "\u25BC SLOWER" : "\u25C6 TIE";
+                    const speedColor = c.isFaster === true ? "text-green-400" : c.isFaster === false ? "text-red-400" : "text-yellow-400";
+                    return (
+                      <div key={c.pokemon.slot} className="rounded-sm bg-pine-surface px-2 py-1">
+                        <div className="flex items-center gap-1 text-[10px]">
+                          <span className="font-bold text-pine-muted">#{i + 1}</span>
+                          {isBest && <span className="text-yellow-400">{"\u2605"}</span>}
+                          <span className="font-bold text-pine-text">
+                            {c.pokemon.nickname || c.pokemon.name}
+                          </span>
+                          <span className="text-pine-muted">
+                            {c.pokemon.types.join("/")}
+                          </span>
+                          <span className={`${RATING_COLORS[c.rating]} ml-auto rounded-sm px-1 py-px text-[9px] font-bold`}>
+                            {c.rating}
+                          </span>
+                        </div>
+                        <div className="mt-0.5 flex flex-wrap items-center gap-1.5 pl-4 text-[9px] text-pine-muted">
+                          {c.worstEnemyMove && (
+                            <span>
+                              Survives {c.worstEnemyMove} ({c.worstDamagePercent}%)
+                            </span>
+                          )}
+                          {!c.worstEnemyMove && <span>No known enemy moves</span>}
+                          {c.bestOwnMove && (
+                            <>
+                              <span>{"\u00B7"}</span>
+                              <span>
+                                {c.bestOwnMove} {c.bestDamagePercent}%
+                                {c.bestKO ? ` (${c.bestKO})` : ""}
+                              </span>
+                            </>
+                          )}
+                          <span>{"\u00B7"}</span>
+                          <span className={speedColor}>{speedLabel}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Stats */}
           <div className="mt-2 space-y-0.5">

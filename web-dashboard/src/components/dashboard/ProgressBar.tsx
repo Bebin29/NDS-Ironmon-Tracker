@@ -2,7 +2,7 @@
 
 import { BadgeIcon } from "@/components/ui/Badge";
 import { ConnectionStatus } from "@/components/ui/ConnectionStatus";
-import { getLevelCap, getNextGymLeader } from "@/lib/platinum-data";
+import { getLevelCap, getNextGymLeader } from "@/lib/game-data";
 
 function formatTimer(seconds: number): string {
   const h = Math.floor(seconds / 3600);
@@ -18,6 +18,7 @@ export function ProgressBar({
   location,
   connected,
   runOver,
+  pokecenterCount,
 }: {
   gameName: string;
   badges: number[];
@@ -25,10 +26,11 @@ export function ProgressBar({
   location: string;
   connected: boolean;
   runOver: boolean;
+  pokecenterCount: number;
 }) {
   const badgeCount = badges.filter((b) => b === 1).length;
-  const levelCap = getLevelCap(badgeCount);
-  const nextGym = getNextGymLeader(badgeCount);
+  const levelCap = getLevelCap(badgeCount, gameName);
+  const nextGym = getNextGymLeader(badgeCount, gameName);
 
   return (
     <div className="flex items-center justify-between bg-pine-surface px-6 py-3">
@@ -69,6 +71,17 @@ export function ProgressBar({
             Lv Cap
           </span>
           <span className="text-sm font-bold text-pine-warning">{levelCap}</span>
+        </div>
+        <div className="h-6 w-px bg-pine-border" />
+        <div className="flex items-center gap-1">
+          <span className="text-[10px] uppercase tracking-wider text-pine-muted">Heals</span>
+          <span className={`text-sm font-bold ${
+            pokecenterCount <= 2 ? "text-pine-danger"
+              : pokecenterCount <= 5 ? "text-pine-warning"
+              : "text-pine-accent"
+          }`}>
+            {pokecenterCount}
+          </span>
         </div>
         <div className="h-6 w-px bg-pine-border" />
         <span className="text-sm font-medium text-pine-muted">

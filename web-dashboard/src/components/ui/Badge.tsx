@@ -1,6 +1,6 @@
 "use client";
 
-import { BADGE_NAMES } from "@/lib/platinum-data";
+import { BADGE_NAMES } from "@/lib/game-data";
 
 export function BadgeIcon({
   index,

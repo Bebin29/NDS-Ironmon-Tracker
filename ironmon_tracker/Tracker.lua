@@ -180,6 +180,10 @@ local function Tracker()
 		return trackedData.encounterData[areaName or currentAreaName]
 	end
 
+	function self.getAllEncounterData()
+		return trackedData.encounterData
+	end
+
 	function self.updateCurrentAreaName(newAreaName)
 		currentAreaName = newAreaName
 	end

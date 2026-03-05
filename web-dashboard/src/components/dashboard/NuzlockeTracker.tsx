@@ -5,7 +5,7 @@ import {
   checkNuzlockeWarnings,
   getDeadPokemon,
 } from "@/lib/nuzlocke-rules";
-import { getLevelCap, getNextGymLeader } from "@/lib/platinum-data";
+import { getLevelCap, getNextGymLeader } from "@/lib/game-data";
 import { useState } from "react";
 
 export function NuzlockeTracker({ state }: { state: TrackerState }) {
@@ -13,8 +13,8 @@ export function NuzlockeTracker({ state }: { state: TrackerState }) {
   const warnings = checkNuzlockeWarnings(state);
   const dead = getDeadPokemon(state);
   const badgeCount = state.badges.filter((b) => b === 1).length;
-  const levelCap = getLevelCap(badgeCount);
-  const nextGym = getNextGymLeader(badgeCount);
+  const levelCap = getLevelCap(badgeCount, state.gameName);
+  const nextGym = getNextGymLeader(badgeCount, state.gameName);
 
   return (
     <div className="space-y-4">
@@ -44,7 +44,9 @@ export function NuzlockeTracker({ state }: { state: TrackerState }) {
                 className={`text-[10px] ${
                   w.type === "dead"
                     ? "text-pine-danger"
-                    : "text-pine-warning"
+                    : w.type === "nearcap"
+                      ? "text-amber-400"
+                      : "text-pine-warning"
                 }`}
               >
                 • {w.message}

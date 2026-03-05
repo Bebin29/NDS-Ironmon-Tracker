@@ -463,6 +463,65 @@ function Network.exportFullState()
 		end
 	end
 
+	-- Build encounter data
+	local encountersExport = nil
+	local locationData = gameInfo and gameInfo.LOCATION_DATA
+	if locationData then
+		local areaOrder = locationData.encounterAreaOrder or {}
+		local vanillaEncounters = locationData.encounters or {}
+		local allEncounterData = tracker.getAllEncounterData() or {}
+
+		local routesExport = {}
+		local addedRoutes = {}
+
+		-- Routes from the ordered list first
+		for _, routeName in ipairs(areaOrder) do
+			addedRoutes[routeName] = true
+			local routeInfo = { totalPokemon = 0, seen = {} }
+			if vanillaEncounters[routeName] then
+				routeInfo.totalPokemon = vanillaEncounters[routeName].totalPokemon or 0
+			end
+			local trackedArea = allEncounterData[routeName]
+			if trackedArea and trackedArea.encountersSeen then
+				for pokemonID, levels in pairs(trackedArea.encountersSeen) do
+					local pokemonEntry = PokemonData.POKEMON[pokemonID + 1]
+					table.insert(routeInfo.seen, {
+						name = pokemonEntry and pokemonEntry.name or "Unknown",
+						pokemonID = pokemonID,
+						levels = levels
+					})
+				end
+			end
+			routesExport[routeName] = routeInfo
+		end
+
+		-- Extra routes with data not in ordered list
+		for routeName, trackedArea in pairs(allEncounterData) do
+			if not addedRoutes[routeName] then
+				local routeInfo = { totalPokemon = 0, seen = {} }
+				if vanillaEncounters[routeName] then
+					routeInfo.totalPokemon = vanillaEncounters[routeName].totalPokemon or 0
+				end
+				if trackedArea.encountersSeen then
+					for pokemonID, levels in pairs(trackedArea.encountersSeen) do
+						local pokemonEntry = PokemonData.POKEMON[pokemonID + 1]
+						table.insert(routeInfo.seen, {
+							name = pokemonEntry and pokemonEntry.name or "Unknown",
+							pokemonID = pokemonID,
+							levels = levels
+						})
+					end
+				end
+				routesExport[routeName] = routeInfo
+			end
+		end
+
+		encountersExport = {
+			areaOrder = areaOrder,
+			routes = routesExport
+		}
+	end
+
 	-- Build state object
 	local state = {
 		timestamp = os.time(),
@@ -480,6 +539,7 @@ function Network.exportFullState()
 		pokecenterCount = tracker.getPokecenterCount(),
 		runOver = tracker.hasRunEnded(),
 		leadStatStages = leadStatStages,
+		encounters = encountersExport,
 	}
 
 	-- Count badges

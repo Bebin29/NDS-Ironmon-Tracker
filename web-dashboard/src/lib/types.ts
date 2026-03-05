@@ -79,6 +79,22 @@ export interface HealingItem {
   quantity: number;
 }
 
+export interface RouteEncounterPokemon {
+  name: string;
+  pokemonID: number;
+  levels: number[];
+}
+
+export interface RouteEncounterData {
+  totalPokemon: number;
+  seen: RouteEncounterPokemon[];
+}
+
+export interface EncounterData {
+  areaOrder: string[];
+  routes: Record<string, RouteEncounterData>;
+}
+
 export interface TrackerState {
   timestamp: number;
   gameName: string;
@@ -95,6 +111,21 @@ export interface TrackerState {
   pokecenterCount: number;
   runOver: boolean;
   leadStatStages?: StatStages;
+  encounters?: EncounterData;
+}
+
+export interface GraveyardEntry {
+  pid: number;
+  pokemonID: number;
+  name: string;
+  nickname: string;
+  level: number;
+  location: string;
+  timestamp: number;
+  types: string[];
+  killedBy?: string;
+  killedByLevel?: number;
+  wasWildEncounter?: boolean;
 }
 
 export interface ChatMessage {

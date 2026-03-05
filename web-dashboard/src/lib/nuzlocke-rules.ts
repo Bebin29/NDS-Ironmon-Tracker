@@ -1,15 +1,15 @@
 import type { PartyPokemon, TrackerState } from "./types";
-import { getLevelCap } from "./platinum-data";
+import { getLevelCap } from "./game-data";
 
 export interface NuzlockeWarning {
-  type: "overlevel" | "dead" | "critical_hp";
+  type: "overlevel" | "dead" | "critical_hp" | "nearcap";
   pokemonName: string;
   message: string;
 }
 
 export function checkNuzlockeWarnings(state: TrackerState): NuzlockeWarning[] {
   const warnings: NuzlockeWarning[] = [];
-  const levelCap = getLevelCap(state.badgeCount);
+  const levelCap = getLevelCap(state.badgeCount, state.gameName);
 
   for (const pokemon of state.party) {
     if (pokemon.isEgg === 1) continue;
@@ -29,6 +29,15 @@ export function checkNuzlockeWarnings(state: TrackerState): NuzlockeWarning[] {
         type: "overlevel",
         pokemonName: pokemon.nickname || pokemon.name,
         message: `${pokemon.nickname || pokemon.name} (Lv.${pokemon.level}) exceeds level cap ${levelCap}!`,
+      });
+    }
+
+    // Near level cap (within 2 levels)
+    if (pokemon.level >= levelCap - 2 && pokemon.level <= levelCap && pokemon.curHP > 0) {
+      warnings.push({
+        type: "nearcap",
+        pokemonName: pokemon.nickname || pokemon.name,
+        message: `${pokemon.nickname || pokemon.name} (Lv.${pokemon.level}) is near the level cap (${levelCap})!`,
       });
     }
 
@@ -54,8 +63,13 @@ export function getDeadPokemon(state: TrackerState): PartyPokemon[] {
 }
 
 export function getOverleveledPokemon(state: TrackerState): PartyPokemon[] {
-  const levelCap = getLevelCap(state.badgeCount);
+  const levelCap = getLevelCap(state.badgeCount, state.gameName);
   return state.party.filter(
     (p) => p.isEgg !== 1 && p.level > levelCap
   );
+}
+
+export function isNearLevelCap(level: number, badgeCount: number, gameName?: string, threshold = 2): boolean {
+  const cap = getLevelCap(badgeCount, gameName);
+  return level >= cap - threshold && level <= cap;
 }

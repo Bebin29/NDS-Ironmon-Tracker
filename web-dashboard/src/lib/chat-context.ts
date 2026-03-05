@@ -1,10 +1,11 @@
 import type { TrackerState, StatStages } from "./types";
-import { getLevelCap, getNextGymLeader } from "./platinum-data";
+import { getLevelCap, getNextGymLeader } from "./game-data";
 import { NATURE_NAMES, STATUS_NAMES } from "./types";
 import { getAbilityShortDesc } from "./ability-effects";
 import { getItemShortDesc } from "./item-effects";
 import { getStatStageMult, calculateMoveMatchup, type DamageOptions } from "./damage-calc";
 import { isSTAB } from "./type-effectiveness";
+import { analyzeSwitchins } from "./switchin-calc";
 
 function formatStatStages(stages?: StatStages): string {
   if (!stages) return "";
@@ -21,8 +22,8 @@ export function buildSystemPrompt(state: TrackerState | null): string {
     return `You are a concise Pokemon Platinum Soul Link Nuzlocke advisor. The tracker is not connected — answer general Platinum strategy questions. Keep answers short and direct.`;
   }
 
-  const levelCap = getLevelCap(state.badgeCount);
-  const nextGym = getNextGymLeader(state.badgeCount);
+  const levelCap = getLevelCap(state.badgeCount, state.gameName);
+  const nextGym = getNextGymLeader(state.badgeCount, state.gameName);
 
   const partyLines = state.party
     .map((p) => {
@@ -125,11 +126,36 @@ export function buildSystemPrompt(state: TrackerState | null): string {
         battleInfo += `\nYOUR MOVES VS ENEMY:\n${yourMoveLines.join("\n")}`;
       }
     }
+
+    // Switch-in ranking
+    const switchAnalysis = analyzeSwitchins(state.party, e);
+    if (switchAnalysis.candidates.length > 0) {
+      const switchLines = switchAnalysis.candidates.slice(0, 3).map((c, i) => {
+        const speedStr = c.isFaster === true ? "faster" : c.isFaster === false ? "slower" : "speed tie";
+        const worstHit = c.worstEnemyMove ? `worst hit: ${c.worstEnemyMove} (${c.worstDamagePercent}%)` : "no known enemy moves";
+        const bestMove = c.bestOwnMove ? `best move: ${c.bestOwnMove} (${c.bestDamagePercent}%${c.bestKO ? `, ${c.bestKO}` : ""})` : "no damaging moves";
+        return `#${i + 1} ${c.pokemon.nickname || c.pokemon.name} (${c.pokemon.name}) [${c.rating}] score=${c.totalScore} | ${worstHit} | ${bestMove} | ${speedStr}`;
+      });
+      battleInfo += `\nSWITCH-IN RANKING:\n${switchLines.join("\n")}`;
+    }
   }
 
   const items = state.healingItems
     .map((i) => `${i.name} x${i.quantity}`)
     .join(", ");
+
+  let encounterInfo = "";
+  if (state.encounters) {
+    const routeLines = (state.encounters.areaOrder || []).map((routeName) => {
+      const route = state.encounters!.routes[routeName];
+      if (!route) return null;
+      const seen = route.seen.map((p) => p.name).join(", ");
+      return `${routeName}: ${route.seen.length}/${route.totalPokemon || "?"}${seen ? ` (${seen})` : ""}`;
+    }).filter(Boolean);
+    if (routeLines.length > 0) {
+      encounterInfo = `\nROUTE ENCOUNTERS:\n${routeLines.join("\n")}`;
+    }
+  }
 
   return `You are a concise Pokemon Platinum Soul Link Nuzlocke advisor embedded in a live tracker dashboard.
 
@@ -143,7 +169,7 @@ RULES:
 STATE:
 ${state.gameName} | ${state.location} | ${state.badgeCount}/8 badges | ${state.runOver ? "RUN OVER" : "Active"}
 Level cap: ${levelCap} | Next gym: ${nextGym.name} (${nextGym.type})
-Items: ${items || "none"}
+Items: ${items || "none"}${encounterInfo}
 ${battleInfo}
 
 PARTY:

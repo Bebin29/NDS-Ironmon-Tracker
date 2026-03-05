@@ -9,6 +9,8 @@ import { StatusIcon } from "@/components/ui/StatusIcon";
 import { StatBar } from "@/components/ui/StatBar";
 import { getAttackMultiplier, isSTAB } from "@/lib/type-effectiveness";
 import { calculateMoveMatchup, type KOChance, type DamageOptions } from "@/lib/damage-calc";
+import { isNearLevelCap } from "@/lib/nuzlocke-rules";
+import { getLevelCap } from "@/lib/game-data";
 
 function MoveEffTag({ multiplier }: { multiplier: number }) {
   if (multiplier === 1) return null;
@@ -33,9 +35,12 @@ function MoveKOTag({ ko }: { ko: KOChance }) {
   return <span className={`${KO_COLORS[ko]} text-[8px] font-bold`}>{ko}</span>;
 }
 
-function PokemonCard({ pokemon, enemy }: { pokemon: PartyPokemon; enemy?: EnemyPokemon | null }) {
+function PokemonCard({ pokemon, enemy, badgeCount, gameName }: { pokemon: PartyPokemon; enemy?: EnemyPokemon | null; badgeCount: number; gameName?: string }) {
   const isDead = pokemon.curHP === 0 && pokemon.maxHP > 0;
   const nature = NATURE_NAMES[pokemon.nature] || "???";
+  const levelCap = getLevelCap(badgeCount, gameName);
+  const nearCap = isNearLevelCap(pokemon.level, badgeCount, gameName);
+  const overCap = pokemon.level > levelCap;
 
   return (
     <div
@@ -48,8 +53,12 @@ function PokemonCard({ pokemon, enemy }: { pokemon: PartyPokemon; enemy?: EnemyP
       <div className="flex gap-3">
         <div className="flex flex-col items-center">
           <PokemonSprite pokemonID={pokemon.pokemonID} size={56} />
-          <span className="mt-1 text-[10px] text-pine-muted">
-            Lv.{pokemon.level}
+          <span className={`mt-1 text-[10px] ${
+            overCap ? "font-bold text-pine-danger"
+              : nearCap ? "font-bold text-amber-400"
+              : "text-pine-muted"
+          }`}>
+            Lv.{pokemon.level}{nearCap && !overCap && " \u26A0"}
           </span>
         </div>
 
@@ -139,7 +148,7 @@ function PokemonCard({ pokemon, enemy }: { pokemon: PartyPokemon; enemy?: EnemyP
   );
 }
 
-export function PartyPanel({ party, enemy }: { party: PartyPokemon[]; enemy?: EnemyPokemon | null }) {
+export function PartyPanel({ party, enemy, badgeCount, gameName }: { party: PartyPokemon[]; enemy?: EnemyPokemon | null; badgeCount: number; gameName?: string }) {
   if (party.length === 0) {
     return (
       <div className="rounded border border-pine-border bg-pine-surface p-4 text-center text-sm text-pine-muted">
@@ -155,7 +164,7 @@ export function PartyPanel({ party, enemy }: { party: PartyPokemon[]; enemy?: En
       </h2>
       <div className="grid gap-3 lg:grid-cols-2 xl:grid-cols-3">
         {party.map((pokemon) => (
-          <PokemonCard key={pokemon.slot} pokemon={pokemon} enemy={enemy} />
+          <PokemonCard key={pokemon.slot} pokemon={pokemon} enemy={enemy} badgeCount={badgeCount} gameName={gameName} />
         ))}
       </div>
     </div>
