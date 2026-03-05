@@ -1,3 +1,13 @@
+export interface StatStages {
+  ATK: number;
+  DEF: number;
+  SPA: number;
+  SPD: number;
+  SPE: number;
+  ACC: number;
+  EVA: number;
+}
+
 export interface MoveData {
   id: number;
   name: string;
@@ -55,7 +65,12 @@ export interface EnemyPokemon {
   };
   moves: MoveData[];
   ability: string;
+  abilityID: number;
   isWild: boolean;
+  statStages?: StatStages;
+  heldItem: number;
+  heldItemName: string;
+  status?: number;
 }
 
 export interface HealingItem {
@@ -79,6 +94,7 @@ export interface TrackerState {
   healingItems: HealingItem[];
   pokecenterCount: number;
   runOver: boolean;
+  leadStatStages?: StatStages;
 }
 
 export interface ChatMessage {

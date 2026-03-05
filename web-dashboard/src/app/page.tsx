@@ -61,6 +61,7 @@ export default function Dashboard() {
             <BattleView
               enemy={state.enemy}
               leadPokemon={state.party.find((p) => p.curHP > 0 && p.maxHP > 0)}
+              leadStatStages={state.leadStatStages}
             />
           )}
           <PartyPanel

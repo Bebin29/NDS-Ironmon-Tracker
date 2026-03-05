@@ -1,6 +1,6 @@
 "use client";
 
-import type { EnemyPokemon, PartyPokemon } from "@/lib/types";
+import type { EnemyPokemon, PartyPokemon, StatStages } from "@/lib/types";
 import { PokemonSprite } from "@/components/ui/PokemonSprite";
 import { TypeBadge } from "@/components/ui/TypeBadge";
 import { HPBar } from "@/components/ui/HPBar";
@@ -12,7 +12,25 @@ import {
   getAttackMultiplier,
   isSTAB,
 } from "@/lib/type-effectiveness";
-import { calculateMoveMatchup, type KOChance } from "@/lib/damage-calc";
+import { calculateMoveMatchup, getStatStageMult, type KOChance, type DamageOptions } from "@/lib/damage-calc";
+import { getAbilityShortDesc } from "@/lib/ability-effects";
+import { getItemShortDesc } from "@/lib/item-effects";
+import { STATUS_NAMES } from "@/lib/types";
+
+const PRIORITY_MOVES: Record<number, number> = {
+  98: 1,    // Quick Attack
+  245: 2,   // ExtremeSpeed
+  183: 1,   // Mach Punch
+  418: 1,   // Bullet Punch
+  420: 1,   // Ice Shard
+  453: 1,   // Aqua Jet
+  425: 1,   // Shadow Sneak
+  389: 1,   // Sucker Punch
+  252: 3,   // Fake Out
+  410: 1,   // Vacuum Wave
+  68: -5,   // Counter
+  243: -5,  // Mirror Coat
+};
 
 function EffectivenessTag({ multiplier }: { multiplier: number }) {
   if (multiplier === 1) return null;
@@ -52,20 +70,94 @@ function DamageRange({ min, max }: { min: number; max: number }) {
   return <span className="font-mono text-[9px] text-pine-muted">{label}</span>;
 }
 
-function SpeedIndicator({ own, enemy, ownStatus }: { own: number; enemy: number; ownStatus: number }) {
+function PriorityTag({ moveId }: { moveId: number }) {
+  const pri = PRIORITY_MOVES[moveId];
+  if (pri === undefined) return null;
+  const color = pri > 0 ? "bg-cyan-700/80 text-white" : "bg-orange-700/80 text-white";
+  return (
+    <span className={`${color} rounded-sm px-1 py-px text-[9px] font-bold`}>
+      {pri > 0 ? `+${pri}` : `${pri}`}
+    </span>
+  );
+}
+
+function CritRange({ damage }: { damage: { critMin?: number; critMax?: number; critMinPercent?: number; critMaxPercent?: number; max: number } }) {
+  if (!damage.critMax || damage.critMax === damage.max) return null;
+  const label = damage.critMin === damage.critMax ? `${damage.critMin}` : `${damage.critMin}-${damage.critMax}`;
+  return (
+    <span className="text-[9px] text-yellow-500">
+      crit: {label} ({damage.critMinPercent}-{damage.critMaxPercent}%)
+    </span>
+  );
+}
+
+function StatusTag({ status }: { status?: number }) {
+  if (!status || status === 0) return null;
+  const name = STATUS_NAMES[status] || "???";
+  const colors: Record<number, string> = {
+    1: "bg-purple-700/80", // PSN
+    2: "bg-red-700/80",    // BRN
+    3: "bg-cyan-700/80",   // FRZ
+    4: "bg-yellow-600/80", // PAR
+    5: "bg-gray-600/80",   // SLP
+    6: "bg-purple-900/80", // TOX
+  };
+  return (
+    <span className={`${colors[status] || "bg-pine-text/20"} rounded-sm px-1 py-px text-[9px] font-bold text-white`}>
+      {name}
+    </span>
+  );
+}
+
+function SpeedIndicator({
+  own, enemy, ownStatus, ownSpeStage, enemySpeStage,
+}: {
+  own: number; enemy: number; ownStatus: number;
+  ownSpeStage?: number; enemySpeStage?: number;
+}) {
+  // Apply stat stage multipliers (raw 0-12, 6=neutral)
+  let effectiveOwn = ownSpeStage !== undefined
+    ? Math.floor(own * getStatStageMult(ownSpeStage))
+    : own;
+  let effectiveEnemy = enemySpeStage !== undefined
+    ? Math.floor(enemy * getStatStageMult(enemySpeStage))
+    : enemy;
   // Gen 4: Paralysis quarters speed
-  const effectiveOwn = ownStatus === 4 ? Math.floor(own / 4) : own;
-  const diff = effectiveOwn - enemy;
+  if (ownStatus === 4) effectiveOwn = Math.floor(effectiveOwn / 4);
+  const diff = effectiveOwn - effectiveEnemy;
   const label = diff > 0 ? "FASTER" : diff < 0 ? "SLOWER" : "SPEED TIE";
   const color = diff > 0 ? "text-green-400" : diff < 0 ? "text-red-400" : "text-yellow-400";
   const arrow = diff > 0 ? "\u25B2" : diff < 0 ? "\u25BC" : "\u25C6";
+  const ownLabel = effectiveOwn !== own ? `${effectiveOwn}` : `${own}`;
+  const enemyLabel = effectiveEnemy !== enemy ? `${effectiveEnemy}` : `${enemy}`;
   return (
     <div className={`flex items-center gap-1 text-[10px] font-bold ${color}`}>
       <span>{arrow}</span>
       <span>{label}</span>
       <span className="font-normal text-pine-muted">
-        ({effectiveOwn}{ownStatus === 4 ? "*" : ""} vs {enemy})
+        ({ownLabel}{ownStatus === 4 ? "*" : ""} vs {enemyLabel})
       </span>
+    </div>
+  );
+}
+
+function StatStageIndicator({ stages, label }: { stages?: StatStages; label?: string }) {
+  if (!stages) return null;
+  const STAT_KEYS = ["ATK", "DEF", "SPA", "SPD", "SPE"] as const;
+  const nonNeutral = STAT_KEYS.filter((k) => stages[k] !== 6);
+  if (nonNeutral.length === 0) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-1">
+      {label && <span className="text-[9px] text-pine-muted">{label}</span>}
+      {nonNeutral.map((k) => {
+        const val = stages[k] - 6;
+        const color = val > 0 ? "bg-green-700/80 text-white" : "bg-red-800/80 text-white";
+        return (
+          <span key={k} className={`${color} rounded-sm px-1 py-px text-[9px] font-bold`}>
+            {val > 0 ? "+" : ""}{val} {k}
+          </span>
+        );
+      })}
     </div>
   );
 }
@@ -73,9 +165,11 @@ function SpeedIndicator({ own, enemy, ownStatus }: { own: number; enemy: number;
 export function BattleView({
   enemy,
   leadPokemon,
+  leadStatStages,
 }: {
   enemy: EnemyPokemon;
   leadPokemon?: PartyPokemon;
+  leadStatStages?: StatStages;
 }) {
   const weaknesses = getDefensiveWeaknesses(enemy.types);
   const resistances = getDefensiveResistances(enemy.types);
@@ -93,6 +187,8 @@ export function BattleView({
             own={leadPokemon.stats.SPE}
             enemy={enemy.stats.SPE}
             ownStatus={leadPokemon.status}
+            ownSpeStage={leadStatStages?.SPE}
+            enemySpeStage={enemy.statStages?.SPE}
           />
         )}
       </div>
@@ -108,6 +204,7 @@ export function BattleView({
               {enemy.name}
             </span>
             <span className="text-xs text-pine-muted">Lv.{enemy.level}</span>
+            <StatusTag status={enemy.status} />
           </div>
 
           <div className="mt-1 flex gap-1">
@@ -120,9 +217,28 @@ export function BattleView({
             <HPBar current={enemy.curHP} max={enemy.maxHP} />
           </div>
 
-          <div className="mt-1 text-[10px] text-pine-muted">
-            Ability: {enemy.ability}
+          <div className="mt-1 flex items-center gap-1 text-[10px] text-pine-muted">
+            <span>Ability: {enemy.ability}</span>
+            {enemy.abilityID > 0 && getAbilityShortDesc(enemy.abilityID) && (
+              <span className="rounded-sm bg-pine-accent/20 px-1 py-px text-[9px] font-bold text-pine-accent">
+                {getAbilityShortDesc(enemy.abilityID)}
+              </span>
+            )}
           </div>
+
+          {enemy.heldItemName && enemy.heldItemName !== "None" && (
+            <div className="mt-0.5 flex items-center gap-1 text-[10px] text-pine-muted">
+              <span>Item: {enemy.heldItemName}</span>
+              {enemy.heldItem > 0 && getItemShortDesc(enemy.heldItem) && (
+                <span className="rounded-sm bg-yellow-600/20 px-1 py-px text-[9px] font-bold text-yellow-500">
+                  {getItemShortDesc(enemy.heldItem)}
+                </span>
+              )}
+            </div>
+          )}
+
+          <StatStageIndicator stages={enemy.statStages} label="Enemy:" />
+          {leadStatStages && <StatStageIndicator stages={leadStatStages} label="You:" />}
 
           {/* Weaknesses / Resistances / Immunities */}
           <div className="mt-2 space-y-1 text-[10px]">
@@ -185,7 +301,15 @@ export function BattleView({
                   .map((move) => {
                     const mult = getAttackMultiplier(move.type, enemy.types);
                     const stab = isSTAB(move.type, leadPokemon.types);
-                    const matchup = calculateMoveMatchup(leadPokemon, enemy, move, enemy.curHP);
+                    const matchup = calculateMoveMatchup(leadPokemon, enemy, move, enemy.curHP, {
+                      attackerStages: leadStatStages,
+                      defenderStages: enemy.statStages,
+                      attackerAbilityID: leadPokemon.abilityID,
+                      defenderAbilityID: enemy.abilityID,
+                      defenderStatus: enemy.status ?? 0,
+                      attackerItemID: leadPokemon.heldItem,
+                      defenderItemID: enemy.heldItem,
+                    } as DamageOptions);
                     return (
                       <div
                         key={move.id}
@@ -194,6 +318,7 @@ export function BattleView({
                         <div className="flex items-center gap-1">
                           <TypeBadge type={move.type} />
                           <span className="truncate text-pine-secondary">{move.name}</span>
+                          <PriorityTag moveId={move.id} />
                           {stab && (
                             <span className="rounded-sm bg-yellow-600/80 px-1 py-px text-[9px] font-bold text-white">
                               STAB
@@ -202,12 +327,13 @@ export function BattleView({
                           <EffectivenessTag multiplier={mult} />
                         </div>
                         {matchup.damage && matchup.damage.max > 0 && (
-                          <div className="mt-0.5 flex items-center gap-1 pl-4">
+                          <div className="mt-0.5 flex flex-wrap items-center gap-1 pl-4">
                             <DamageRange min={matchup.damage.min} max={matchup.damage.max} />
                             <span className="text-[9px] text-pine-muted">
                               ({matchup.damage.minPercent}-{matchup.damage.maxPercent}%)
                             </span>
                             <KOTag ko={matchup.ko} />
+                            <CritRange damage={matchup.damage} />
                           </div>
                         )}
                       </div>
@@ -229,7 +355,15 @@ export function BattleView({
                   .map((move) => {
                     const hasPower = move.power && move.power !== 0 && move.category;
                     const matchup = hasPower
-                      ? calculateMoveMatchup(enemy, leadPokemon, move, leadPokemon.curHP)
+                      ? calculateMoveMatchup(enemy, leadPokemon, move, leadPokemon.curHP, {
+                          attackerStages: enemy.statStages,
+                          defenderStages: leadStatStages,
+                          attackerAbilityID: enemy.abilityID,
+                          defenderAbilityID: leadPokemon.abilityID,
+                          defenderStatus: leadPokemon.status,
+                          attackerItemID: enemy.heldItem,
+                          defenderItemID: leadPokemon.heldItem,
+                        } as DamageOptions)
                       : null;
                     return (
                       <div
@@ -239,14 +373,16 @@ export function BattleView({
                         <div className="flex items-center gap-1">
                           <TypeBadge type={move.type} />
                           <span className="truncate text-pine-secondary">{move.name}</span>
+                          <PriorityTag moveId={move.id} />
                         </div>
                         {matchup?.damage && matchup.damage.max > 0 && (
-                          <div className="mt-0.5 flex items-center gap-1 pl-4">
+                          <div className="mt-0.5 flex flex-wrap items-center gap-1 pl-4">
                             <DamageRange min={matchup.damage.min} max={matchup.damage.max} />
                             <span className="text-[9px] text-pine-muted">
                               ({matchup.damage.minPercent}-{matchup.damage.maxPercent}%)
                             </span>
                             <KOTag ko={matchup.ko} />
+                            <CritRange damage={matchup.damage} />
                           </div>
                         )}
                       </div>

@@ -419,7 +419,12 @@ function Network.exportFullState()
 			stats = enemyPokemon.stats or {},
 			moves = movesArray,
 			ability = abilityEntry and abilityEntry.name or "Unknown",
+			abilityID = enemyPokemon.ability or 0,
 			isWild = program.isWildBattle(),
+			statStages = enemyPokemon.statStages or nil,
+			heldItem = enemyPokemon.heldItem or 0,
+			heldItemName = (ItemData.ITEMS and ItemData.ITEMS[(enemyPokemon.heldItem or 0) + 1] and ItemData.ITEMS[(enemyPokemon.heldItem or 0) + 1].name) or "None",
+			status = enemyPokemon.status or 0,
 		}
 	end
 
@@ -449,6 +454,15 @@ function Network.exportFullState()
 		})
 	end
 
+	-- Get lead pokemon stat stages (only available in battle)
+	local leadStatStages = nil
+	if battleHandler:isInBattle() then
+		local playerPokemon = program.getPlayerPokemon()
+		if playerPokemon and playerPokemon.statStages then
+			leadStatStages = playerPokemon.statStages
+		end
+	end
+
 	-- Build state object
 	local state = {
 		timestamp = os.time(),
@@ -465,6 +479,7 @@ function Network.exportFullState()
 		healingItems = healingList,
 		pokecenterCount = tracker.getPokecenterCount(),
 		runOver = tracker.hasRunEnded(),
+		leadStatStages = leadStatStages,
 	}
 
 	-- Count badges

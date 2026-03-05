@@ -8,7 +8,7 @@ import { HPBar } from "@/components/ui/HPBar";
 import { StatusIcon } from "@/components/ui/StatusIcon";
 import { StatBar } from "@/components/ui/StatBar";
 import { getAttackMultiplier, isSTAB } from "@/lib/type-effectiveness";
-import { calculateMoveMatchup, type KOChance } from "@/lib/damage-calc";
+import { calculateMoveMatchup, type KOChance, type DamageOptions } from "@/lib/damage-calc";
 
 function MoveEffTag({ multiplier }: { multiplier: number }) {
   if (multiplier === 1) return null;
@@ -96,7 +96,12 @@ function PokemonCard({ pokemon, enemy }: { pokemon: PartyPokemon; enemy?: EnemyP
             const mult = enemy ? getAttackMultiplier(move.type, enemy.types) : null;
             const stab = isSTAB(move.type, pokemon.types);
             const matchup = enemy
-              ? calculateMoveMatchup(pokemon, enemy, move, enemy.curHP)
+              ? calculateMoveMatchup(pokemon, enemy, move, enemy.curHP, {
+                  attackerAbilityID: pokemon.abilityID,
+                  defenderAbilityID: enemy.abilityID,
+                  attackerItemID: pokemon.heldItem,
+                  defenderItemID: enemy.heldItem,
+                } as DamageOptions)
               : null;
             return (
               <div
