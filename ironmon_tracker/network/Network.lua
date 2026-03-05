@@ -317,10 +317,164 @@ end
 --- Attempts to perform the scheduled network data update
 function Network.update()
 	if not Network.isConnected() then
+		Network.exportFullStateOnSchedule()
 		return
 	end
 	Network.CurrentConnection:SendReceiveOnSchedule()
 	RequestHandler.saveRequestsDataOnSchedule()
+	Network.exportFullStateOnSchedule()
+end
+
+Network.STATE_EXPORT_FILE = "tracker-state.json"
+Network.lastExportTime = 0
+Network.STATE_EXPORT_FREQUENCY = 2 -- seconds
+
+--- Exports full game state to JSON file on a 2-second schedule
+function Network.exportFullStateOnSchedule()
+	if not Network.Data or not Network.Data.program then return end
+	if (os.time() - Network.lastExportTime) < Network.STATE_EXPORT_FREQUENCY then return end
+	Network.lastExportTime = os.time()
+	Network.exportFullState()
+end
+
+--- Builds full game state and writes it to tracker-state.json
+function Network.exportFullState()
+	if not Network.Data or not Network.Data.program then return end
+	if not NetworkUtils.JsonLibrary then return end
+
+	local program = Network.Data.program
+	local tracker = Network.Data.tracker
+	local battleHandler = Network.Data.battleHandler
+	local gameInfo = Network.Data.gameInfo
+
+	-- Build party data
+	local partyData = {}
+	local fullParty = program.getFullParty()
+	for i, pokemon in ipairs(fullParty) do
+		local pokemonEntry = PokemonData.POKEMON[pokemon.pokemonID + 1]
+		local movesArray = {}
+		for j, moveID in ipairs(pokemon.moveIDs or {}) do
+			local moveEntry = MoveData.MOVES[moveID + 1]
+			table.insert(movesArray, {
+				id = moveID,
+				name = moveEntry and moveEntry.name or "---",
+				pp = pokemon.movePPs and pokemon.movePPs[j] or 0,
+				type = moveEntry and moveEntry.type or "",
+				category = moveEntry and moveEntry.category or "",
+				power = moveEntry and moveEntry.power or 0,
+				accuracy = moveEntry and moveEntry.accuracy or 0,
+			})
+		end
+		local abilityEntry = AbilityData.ABILITIES[pokemon.ability + 1]
+		table.insert(partyData, {
+			slot = i,
+			pokemonID = pokemon.pokemonID,
+			name = pokemonEntry and pokemonEntry.name or "Unknown",
+			types = pokemonEntry and pokemonEntry.type or {},
+			level = pokemon.level or 0,
+			curHP = pokemon.curHP or 0,
+			maxHP = pokemon.stats and pokemon.stats.HP or 0,
+			stats = pokemon.stats or {},
+			moves = movesArray,
+			ability = abilityEntry and abilityEntry.name or "Unknown",
+			abilityID = pokemon.ability or 0,
+			nature = pokemon.nature or 0,
+			heldItem = pokemon.heldItem or 0,
+			heldItemName = (ItemData.ITEMS and ItemData.ITEMS[pokemon.heldItem + 1] and ItemData.ITEMS[pokemon.heldItem + 1].name) or "None",
+			status = pokemon.status or 0,
+			nickname = pokemon.nickname or "",
+			experience = pokemon.experience or 0,
+			friendship = pokemon.friendship or 0,
+			isEgg = pokemon.isEgg or 0,
+			pid = pokemon.pid or 0,
+		})
+	end
+
+	-- Build enemy data (if in battle)
+	local enemyData = nil
+	local enemyPokemon = program.getEnemyPokemon()
+	if battleHandler:isInBattle() and enemyPokemon and MiscUtils.validPokemonData(enemyPokemon) then
+		local pokemonEntry = PokemonData.POKEMON[enemyPokemon.pokemonID + 1]
+		local movesArray = {}
+		for j, moveID in ipairs(enemyPokemon.moveIDs or {}) do
+			local moveEntry = MoveData.MOVES[moveID + 1]
+			table.insert(movesArray, {
+				id = moveID,
+				name = moveEntry and moveEntry.name or "---",
+				pp = enemyPokemon.movePPs and enemyPokemon.movePPs[j] or 0,
+				type = moveEntry and moveEntry.type or "",
+				category = moveEntry and moveEntry.category or "",
+				power = moveEntry and moveEntry.power or 0,
+				accuracy = moveEntry and moveEntry.accuracy or 0,
+			})
+		end
+		local abilityEntry = AbilityData.ABILITIES[(enemyPokemon.ability or 0) + 1]
+		enemyData = {
+			pokemonID = enemyPokemon.pokemonID,
+			name = pokemonEntry and pokemonEntry.name or "Unknown",
+			types = pokemonEntry and pokemonEntry.type or {},
+			level = enemyPokemon.level or 0,
+			curHP = enemyPokemon.curHP or 0,
+			maxHP = enemyPokemon.stats and enemyPokemon.stats.HP or 0,
+			stats = enemyPokemon.stats or {},
+			moves = movesArray,
+			ability = abilityEntry and abilityEntry.name or "Unknown",
+			isWild = program.isWildBattle(),
+		}
+	end
+
+	-- Build badge data
+	local badges = program.getBadges()
+	local badgeList = {}
+	if badges and badges.firstSet then
+		for i, v in ipairs(badges.firstSet) do
+			table.insert(badgeList, v)
+		end
+	end
+	if badges and badges.secondSet then
+		for i, v in ipairs(badges.secondSet) do
+			table.insert(badgeList, v)
+		end
+	end
+
+	-- Healing items
+	local healingItems = program.getHealingItems() or {}
+	local healingList = {}
+	for itemID, qty in pairs(healingItems) do
+		local itemEntry = ItemData.ITEMS and ItemData.ITEMS[itemID + 1]
+		table.insert(healingList, {
+			id = itemID,
+			name = itemEntry and itemEntry.name or ("Item " .. itemID),
+			quantity = qty,
+		})
+	end
+
+	-- Build state object
+	local state = {
+		timestamp = os.time(),
+		gameName = gameInfo and gameInfo.NAME or "Unknown",
+		gen = gameInfo and gameInfo.GEN or 0,
+		party = partyData,
+		enemy = enemyData,
+		inBattle = battleHandler:isInBattle(),
+		badges = badgeList,
+		badgeCount = 0,
+		progress = tracker.getProgress(),
+		timerSeconds = tracker.getTimerSeconds(),
+		location = tracker.getCurrentAreaName() or "",
+		healingItems = healingList,
+		pokecenterCount = tracker.getPokecenterCount(),
+		runOver = tracker.hasRunEnded(),
+	}
+
+	-- Count badges
+	for _, v in ipairs(badgeList) do
+		if v == 1 then state.badgeCount = state.badgeCount + 1 end
+	end
+
+	-- Write to file
+	local filepath = Paths.FOLDERS.DATA_FOLDER .. Paths.SLASH .. Network.STATE_EXPORT_FILE
+	NetworkUtils.encodeToJsonFile(filepath, state)
 end
 
 --- The update function used by the "Text" Network connection type

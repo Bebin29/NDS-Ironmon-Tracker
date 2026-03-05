@@ -1,3 +1,4 @@
+node_modules/
 Settings.ini
 NetworkSettings.ini
 Requests.json
@@ -15,3 +16,4 @@ Requests.json
 *.faves
 *.tdata
 *.State
+ironmon_tracker/tracker-state.json

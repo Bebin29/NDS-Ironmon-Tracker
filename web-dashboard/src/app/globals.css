@@ -1,0 +1,86 @@
+@import "tailwindcss";
+
+@theme {
+  --color-pine-bg: #0a0f0a;
+  --color-pine-surface: #111a11;
+  --color-pine-card: #111a11;
+  --color-pine-border: #2a3a2a;
+  --color-pine-text: #e8f5e0;
+  --color-pine-secondary: #c8d8c0;
+  --color-pine-muted: #5a7a5a;
+  --color-pine-dim: #7a8a7a;
+  --color-pine-accent: #3cb043;
+  --color-pine-accent-dim: #2a8030;
+  --color-pine-danger: #c04040;
+  --color-pine-danger-dim: #7a5a5a;
+  --color-pine-warning: #c4a000;
+  --color-pine-success: #3cb043;
+
+  --color-type-normal: #a8a878;
+  --color-type-fire: #f08030;
+  --color-type-water: #6890f0;
+  --color-type-electric: #f8d030;
+  --color-type-grass: #78c850;
+  --color-type-ice: #98d8d8;
+  --color-type-fighting: #c03028;
+  --color-type-poison: #a040a0;
+  --color-type-ground: #e0c068;
+  --color-type-flying: #a890f0;
+  --color-type-psychic: #f85888;
+  --color-type-bug: #a8b820;
+  --color-type-rock: #b8a038;
+  --color-type-ghost: #705898;
+  --color-type-dragon: #7038f8;
+  --color-type-dark: #705848;
+  --color-type-steel: #b8b8d0;
+
+  --font-mono: "JetBrains Mono", "Fira Code", "Cascadia Code", "Consolas", monospace;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("https://cdn.jsdelivr.net/gh/JetBrains/JetBrainsMono@latest/fonts/webfonts/JetBrainsMono-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("https://cdn.jsdelivr.net/gh/JetBrains/JetBrainsMono@latest/fonts/webfonts/JetBrainsMono-Medium.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("https://cdn.jsdelivr.net/gh/JetBrains/JetBrainsMono@latest/fonts/webfonts/JetBrainsMono-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+body {
+  background-color: var(--color-pine-bg);
+  color: var(--color-pine-text);
+  font-family: var(--font-mono);
+}
+
+/* Pixel-art sprite rendering */
+.pixelated {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--color-pine-surface);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-pine-border);
+  border-radius: 3px;
+}

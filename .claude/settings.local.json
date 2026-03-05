@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wc:*)",
+      "Bash(xargs -I {} dirname {})",
+      "Bash(sort -k2)",
+      "Bash(npm install:*)",
+      "Bash(npx next:*)",
+      "Bash(npm run:*)",
+      "Bash(curl:*)",
+      "Skill(claude-developer-platform)",
+      "Bash(rm:*)",
+      "Bash(taskkill:*)",
+      "Bash(netstat:*)",
+      "Bash(tasklist:*)",
+      "Bash(xargs basename:*)",
+      "Bash(npx tsc:*)",
+      "Bash(xargs grep:*)"
+    ]
+  }
+}

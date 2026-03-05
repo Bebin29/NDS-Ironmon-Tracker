@@ -496,6 +496,24 @@ local function Program(initialTracker, initialMemoryAddresses, initialGameInfo, 
 		return playerPokemon
 	end
 
+	--- Returns an array of all 6 party Pokemon data (some may be empty tables)
+	function self.getFullParty()
+		local party = {}
+		for i = 0, 5 do
+			local offset = i * gameInfo.ENCRYPTED_POKEMON_SIZE
+			pokemonDataReader.setCurrentBase(memoryAddresses.playerBase + offset)
+			local data = pokemonDataReader.decryptPokemonInfo(false, i, false)
+			if data and MiscUtils.validPokemonData(data) then
+				table.insert(party, data)
+			end
+		end
+		return party
+	end
+
+	function self.getEnemyPokemon()
+		return enemyPokemon
+	end
+
 	local function getPokemonData(selected)
 		if battleHandler:inBattleAndFetched() then
 			local data = battleHandler:getActivePokemonInBattle(selected)
