@@ -318,16 +318,181 @@ end
 function Network.update()
 	if not Network.isConnected() then
 		Network.exportFullStateOnSchedule()
+		pcall(Network.processCommands)
 		return
 	end
 	Network.CurrentConnection:SendReceiveOnSchedule()
 	RequestHandler.saveRequestsDataOnSchedule()
 	Network.exportFullStateOnSchedule()
+	pcall(Network.processCommands)
 end
 
+Network.COMMAND_FILE = "tracker-command.json"
 Network.STATE_EXPORT_FILE = "tracker-state.json"
+Network.TRAINER_EXPORT_FILE = "tracker-trainer-data.json"
+Network.EVO_EXPORT_FILE = "tracker-evo-data.json"
 Network.lastExportTime = 0
 Network.STATE_EXPORT_FREQUENCY = 2 -- seconds
+Network.trainerDataExported = false -- flag to only export once per ROM load
+Network.trainerDataGameName = nil -- track which game was exported
+
+local RARE_CANDY_ID = 50
+
+-- Cache: last known good party data (by PID) to fill in transient memory read gaps
+local lastKnownParty = {} -- PID -> pokemon data
+
+-- Level caps per game: caps[badgeCount] = level cap for next fight
+-- badgeCount 0 = heading to first gym, 1 = beat first gym heading to second, etc.
+local LEVEL_CAPS = {
+	["Pokemon Platinum"]   = { [0]=14, [1]=22, [2]=30, [3]=32, [4]=36, [5]=41, [6]=44, [7]=50, [8]=78 },
+	["Pokemon Diamond"]    = { [0]=14, [1]=22, [2]=28, [3]=32, [4]=36, [5]=41, [6]=44, [7]=49, [8]=66 },
+	["Pokemon Pearl"]      = { [0]=14, [1]=22, [2]=28, [3]=32, [4]=36, [5]=41, [6]=44, [7]=49, [8]=66 },
+	["Pokemon HeartGold"]  = { [0]=13, [1]=17, [2]=25, [3]=31, [4]=35, [5]=39, [6]=44, [7]=50, [8]=75 },
+	["Pokemon SoulSilver"] = { [0]=13, [1]=17, [2]=25, [3]=31, [4]=35, [5]=39, [6]=44, [7]=50, [8]=75 },
+	["Pokemon Black"]      = { [0]=14, [1]=20, [2]=24, [3]=29, [4]=33, [5]=39, [6]=43, [7]=48, [8]=75 },
+	["Pokemon White"]      = { [0]=14, [1]=20, [2]=24, [3]=29, [4]=33, [5]=39, [6]=43, [7]=48, [8]=75 },
+	["Pokemon Black 2"]    = { [0]=13, [1]=18, [2]=23, [3]=28, [4]=33, [5]=39, [6]=46, [7]=52, [8]=77 },
+	["Pokemon White 2"]    = { [0]=13, [1]=18, [2]=23, [3]=28, [4]=33, [5]=39, [6]=46, [7]=52, [8]=77 },
+}
+
+--- Returns the current level cap based on badge count and game name
+---@return number levelCap
+local function getCurrentLevelCap()
+	if not Network.Data or not Network.Data.gameInfo then return 100 end
+	local gameName = Network.Data.gameInfo.NAME or ""
+	local caps = LEVEL_CAPS[gameName]
+	if not caps then return 100 end
+
+	local badgeCount = 0
+	if Network.Data.program then
+		local badges = Network.Data.program.getBadges()
+		if badges and badges.firstSet then
+			for _, v in ipairs(badges.firstSet) do
+				if v == 1 then badgeCount = badgeCount + 1 end
+			end
+		end
+		if badges and badges.secondSet then
+			for _, v in ipairs(badges.secondSet) do
+				if v == 1 then badgeCount = badgeCount + 1 end
+			end
+		end
+	end
+
+	-- caps[8] = champion cap, caps[0..7] = gym caps
+	if badgeCount > 8 then badgeCount = 8 end
+	return caps[badgeCount] or 100
+end
+
+--- Adds Rare Candies to the player's bag by writing to memory.
+--- Enforces the level cap: only adds enough candies to bring party to the cap.
+---@param count number Requested number of Rare Candies
+---@return boolean success, string message
+function Network.addRareCandyToBag(count)
+	if not Network.Data or not Network.Data.program then
+		return false, "Tracker not initialized"
+	end
+
+	local battleHandler = Network.Data.battleHandler
+	if battleHandler and battleHandler:isInBattle() then
+		return false, "Cannot modify bag during battle"
+	end
+
+	local memoryAddresses = Network.Data.memoryAddresses
+	if not memoryAddresses or not memoryAddresses.itemStartNoBattle then
+		return false, "Memory addresses not available"
+	end
+
+	-- Calculate the actual number of candies needed to reach the level cap
+	local levelCap = getCurrentLevelCap()
+	local maxNeeded = 0
+	local fullParty = Network.Data.program.getFullParty() or {}
+	for _, pokemon in ipairs(fullParty) do
+		if MiscUtils.validPokemonData(pokemon) and pokemon.curHP > 0 and (pokemon.isEgg or 0) == 0 then
+			if pokemon.level < levelCap then
+				maxNeeded = maxNeeded + (levelCap - pokemon.level)
+			end
+		end
+	end
+
+	if maxNeeded <= 0 then
+		return false, "All Pokemon are already at or above the level cap (Lv." .. levelCap .. ")"
+	end
+
+	count = math.floor(count or 0)
+	if count < 1 then
+		return false, "Invalid count"
+	end
+
+	-- Enforce: never add more than what's needed to reach the cap
+	count = math.min(count, maxNeeded)
+
+	-- Scan the bag for existing Rare Candy slot or an empty slot
+	local itemStart = memoryAddresses.itemStartNoBattle
+	local currentAddress = itemStart
+	local emptySlotAddress = nil
+	local maxScan = 300 -- safety limit
+
+	for _ = 1, maxScan do
+		local idAndQuantity = Memory.read_u32_le(currentAddress)
+		local id = bit.band(idAndQuantity, 0xFFFF)
+		local quantity = bit.band(bit.rshift(idAndQuantity, 16), 0xFFFF)
+
+		if id == RARE_CANDY_ID then
+			-- Found existing Rare Candy slot, add to it
+			local newQuantity = math.min(quantity + count, 999)
+			local newValue = bit.bor(RARE_CANDY_ID, bit.lshift(newQuantity, 16))
+			Memory.write_u32_le(currentAddress, newValue)
+			print("Added " .. count .. " Rare Candies (total: " .. newQuantity .. ", cap: Lv." .. levelCap .. ")")
+			return true, "Added " .. count .. " Rare Candies (cap: Lv." .. levelCap .. ")"
+		elseif id == 0 then
+			-- Found empty slot
+			if not emptySlotAddress then
+				emptySlotAddress = currentAddress
+			end
+			break
+		end
+
+		currentAddress = currentAddress + 4
+	end
+
+	-- No existing slot found, write to empty slot
+	if emptySlotAddress then
+		local newValue = bit.bor(RARE_CANDY_ID, bit.lshift(count, 16))
+		Memory.write_u32_le(emptySlotAddress, newValue)
+		print("Added " .. count .. " Rare Candies to new bag slot (cap: Lv." .. levelCap .. ")")
+		return true, "Added " .. count .. " Rare Candies (cap: Lv." .. levelCap .. ")"
+	end
+
+	return false, "No empty bag slot found"
+end
+
+--- Checks for and processes commands from the dashboard
+function Network.processCommands()
+	if not NetworkUtils.JsonLibrary then return end
+
+	local filepath = Paths.FOLDERS.DATA_FOLDER .. Paths.SLASH .. Network.COMMAND_FILE
+	local commandData = NetworkUtils.decodeJsonFile(filepath)
+	if not commandData or not commandData.command then return end
+
+	-- Clear the command file immediately to prevent re-processing
+	local file = io.open(filepath, "w")
+	if file then
+		file:write("[]")
+		file:close()
+	end
+
+	local result = { success = false, message = "Unknown command" }
+
+	if commandData.command == "addRareCandy" then
+		local count = tonumber(commandData.count) or 0
+		local success, message = Network.addRareCandyToBag(count)
+		result = { success = success, message = message }
+	end
+
+	-- Write result back
+	local resultPath = Paths.FOLDERS.DATA_FOLDER .. Paths.SLASH .. "tracker-command-result.json"
+	NetworkUtils.encodeToJsonFile(resultPath, result)
+end
 
 --- Exports full game state to JSON file on a 2-second schedule
 function Network.exportFullStateOnSchedule()
@@ -337,21 +502,275 @@ function Network.exportFullStateOnSchedule()
 	Network.exportFullState()
 end
 
+--- Exports all trainer data from the ROM to trainer-data.json (once per ROM load)
+function Network.exportTrainerData()
+	if not Network.Data or not Network.Data.program then return end
+	if not NetworkUtils.JsonLibrary then return end
+
+	local gameInfo = Network.Data.gameInfo
+	if not gameInfo then return end
+
+	-- Only export once per game, check if already exported for this game
+	local gameName = gameInfo.NAME or "Unknown"
+	if Network.trainerDataExported and Network.trainerDataGameName == gameName then
+		return
+	end
+
+	-- Read trainers from ROM
+	local ok, trainers, trainerCount = pcall(function()
+		return RomReader.readAllTrainers()
+	end)
+
+	if not ok or not trainers then
+		print("Network: Failed to read trainer data from ROM")
+		return
+	end
+
+	-- Build the important trainer ID map from TrainerData constants
+	local importantTrainerMap = {}
+	local gameCode = Memory.read_u32_le(MemoryAddresses.NDS_CONSTANTS.CARTRIDGE_HEADER + 0x0C)
+	local trainerDataConst = TrainerData.TRAINERS[gameCode]
+	if trainerDataConst and trainerDataConst.IMPORTANT_GROUPS then
+		for _, group in ipairs(trainerDataConst.IMPORTANT_GROUPS) do
+			for _, battle in ipairs(group.battles) do
+				-- Handle nested tables (like BW first gym with multiple leaders)
+				if battle.ids then
+					for _, id in ipairs(battle.ids) do
+						importantTrainerMap[id] = {
+							groupName = group.groupName,
+							trainerType = group.trainerType,
+							name = battle.name or group.groupName,
+							location = battle.location or "",
+							badgeNumber = battle.badgeNumber or 0,
+							iv = battle.iv or 0,
+						}
+					end
+				elseif #battle > 0 then
+					-- Nested sub-battles (e.g. BW first gym)
+					for _, subBattle in ipairs(battle) do
+						if subBattle.ids then
+							for _, id in ipairs(subBattle.ids) do
+								importantTrainerMap[id] = {
+									groupName = group.groupName,
+									trainerType = group.trainerType,
+									name = subBattle.name or group.groupName,
+									location = subBattle.location or "",
+									badgeNumber = subBattle.badgeNumber or 0,
+									iv = subBattle.iv or 0,
+								}
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+
+	-- Build export data
+	local exportTrainers = {}
+	for trainerID, trainer in pairs(trainers) do
+		if trainer.pokemonCount > 0 and #trainer.pokemon > 0 then
+			local pokemonExport = {}
+			for _, mon in ipairs(trainer.pokemon) do
+				local movesExport = {}
+				for _, move in ipairs(mon.moves) do
+					table.insert(movesExport, {
+						id = move.id,
+						name = move.name,
+						type = move.type,
+						category = move.category,
+						power = move.power,
+						accuracy = move.accuracy,
+					})
+				end
+
+				-- Convert type table to array of strings
+				local typeNames = {}
+				if mon.types then
+					for _, t in ipairs(mon.types) do
+						if type(t) == "string" then
+							table.insert(typeNames, t)
+						end
+					end
+				end
+
+				table.insert(pokemonExport, {
+					speciesID = mon.speciesID,
+					name = mon.name,
+					types = typeNames,
+					level = mon.level,
+					form = mon.form,
+					heldItem = mon.heldItem,
+					heldItemName = mon.heldItemName,
+					moves = movesExport,
+					ability = mon.ability,
+					abilityID = mon.abilityID,
+				})
+			end
+
+			local metadata = importantTrainerMap[trainerID]
+			local entry = {
+				id = trainerID,
+				trainerClass = trainer.trainerClass,
+				pokemonCount = trainer.pokemonCount,
+				pokemon = pokemonExport,
+			}
+
+			if metadata then
+				entry.groupName = metadata.groupName
+				entry.name = metadata.name
+				entry.trainerType = metadata.trainerType
+				entry.location = metadata.location
+				entry.badgeNumber = metadata.badgeNumber
+			end
+
+			table.insert(exportTrainers, entry)
+		end
+	end
+
+	local exportData = {
+		gameName = gameName,
+		gen = gameInfo.GEN or 0,
+		trainerCount = trainerCount or 0,
+		exportTimestamp = os.time(),
+		trainers = exportTrainers,
+	}
+
+	local filepath = Paths.FOLDERS.DATA_FOLDER .. Paths.SLASH .. Network.TRAINER_EXPORT_FILE
+	local success = NetworkUtils.encodeToJsonFile(filepath, exportData)
+	if success then
+		Network.trainerDataExported = true
+		Network.trainerDataGameName = gameName
+		print("Network: Exported " .. #exportTrainers .. " trainers to " .. Network.TRAINER_EXPORT_FILE)
+	end
+end
+
+--- Exports all evolution data from the ROM to tracker-evo-data.json (once per ROM load)
+function Network.exportEvoData()
+	if Network.evoDataExported then return end
+
+	local ok, evolutions = pcall(RomReader.readAllEvolutions)
+	if not ok or not evolutions then
+		Network.evoDataExported = true
+		return
+	end
+
+	-- Convert to JSON-friendly format (string keys)
+	local evoExport = {}
+	local count = 0
+	for speciesID, evoList in pairs(evolutions) do
+		evoExport[tostring(speciesID)] = evoList
+		count = count + 1
+	end
+
+	local gameInfo = Network.Data and Network.Data.gameInfo
+	local export = {
+		gameName = gameInfo and gameInfo.NAME or "Unknown",
+		gen = gameInfo and gameInfo.GEN or 0,
+		speciesCount = count,
+		exportTimestamp = os.time(),
+		evolutions = evoExport,
+	}
+
+	local filepath = Paths.FOLDERS.DATA_FOLDER .. Paths.SLASH .. Network.EVO_EXPORT_FILE
+	NetworkUtils.encodeToJsonFile(filepath, export)
+	Network.evoDataExported = true
+	print("Network: Exported evolution data for " .. count .. " species to " .. Network.EVO_EXPORT_FILE)
+end
+
 --- Builds full game state and writes it to tracker-state.json
 function Network.exportFullState()
 	if not Network.Data or not Network.Data.program then return end
 	if not NetworkUtils.JsonLibrary then return end
+
+	-- Export trainer data once per ROM load
+	if not Network.trainerDataExported then
+		local ok, err = pcall(Network.exportTrainerData)
+		if not ok then
+			print("Network: exportTrainerData error: " .. tostring(err))
+			Network.trainerDataExported = true -- prevent repeated failures
+		end
+	end
+
+	-- Export evolution data once per ROM load
+	if not Network.evoDataExported then
+		local ok, err = pcall(Network.exportEvoData)
+		if not ok then
+			print("Network: exportEvoData error: " .. tostring(err))
+			Network.evoDataExported = true
+		end
+	end
 
 	local program = Network.Data.program
 	local tracker = Network.Data.tracker
 	local battleHandler = Network.Data.battleHandler
 	local gameInfo = Network.Data.gameInfo
 
-	-- Build party data
+	-- Build party data with cache to prevent transient memory read gaps.
+	-- getFullParty() and getBattleParty() skip slots that fail decryption,
+	-- which causes pokemon to intermittently disappear. We cache each slot's
+	-- last known good data (keyed by PID) and fill in any gaps.
 	local partyData = {}
-	local fullParty = program.getFullParty()
+	local baseParty = program.getFullParty() or {}
+	local battleParty = nil
+	if battleHandler:isInBattle() then
+		local ok, result = pcall(function() return battleHandler:getBattleParty() end)
+		if ok and result and next(result) ~= nil then
+			battleParty = result
+		end
+	end
+	-- Merge: use battle data when available (matched by PID), fall back to base party
+	local fullParty = {}
+	if battleParty and #battleParty > 0 then
+		local battleByPID = {}
+		for _, bmon in ipairs(battleParty) do
+			if bmon.pid and bmon.pid ~= 0 then
+				battleByPID[bmon.pid] = bmon
+			end
+		end
+		for i, baseMon in ipairs(baseParty) do
+			local pid = baseMon.pid or 0
+			local battleMon = pid ~= 0 and battleByPID[pid] or nil
+			fullParty[i] = battleMon or baseMon
+		end
+	else
+		fullParty = baseParty
+	end
+	-- Update cache with current good reads, and fill in any missing slots from cache
+	local expectedSize = 6
+	local currentPIDs = {}
+	for _, mon in ipairs(fullParty) do
+		local pid = mon.pid or 0
+		if pid ~= 0 then
+			lastKnownParty[pid] = mon
+			currentPIDs[pid] = true
+		end
+	end
+	-- If party is smaller than expected, try to recover missing slots from cache
+	if #fullParty < expectedSize and next(lastKnownParty) ~= nil then
+		-- Find cached PIDs that are missing from the current read
+		local missing = {}
+		for pid, mon in pairs(lastKnownParty) do
+			if not currentPIDs[pid] and mon.pokemonID and mon.pokemonID > 0 then
+				table.insert(missing, mon)
+			end
+		end
+		-- Only fill up to expectedSize
+		for _, mon in ipairs(missing) do
+			if #fullParty >= expectedSize then break end
+			table.insert(fullParty, mon)
+		end
+	end
+	-- Evict stale cache entries when party composition changes (e.g. new run)
+	if #fullParty >= expectedSize then
+		for pid in pairs(lastKnownParty) do
+			if not currentPIDs[pid] then
+				lastKnownParty[pid] = nil
+			end
+		end
+	end
 	for i, pokemon in ipairs(fullParty) do
-		local pokemonEntry = PokemonData.POKEMON[pokemon.pokemonID + 1]
+		local pokemonEntry = PokemonData.POKEMON[(pokemon.pokemonID or 0) + 1]
 		local movesArray = {}
 		for j, moveID in ipairs(pokemon.moveIDs or {}) do
 			local moveEntry = MoveData.MOVES[moveID + 1]
@@ -365,7 +784,7 @@ function Network.exportFullState()
 				accuracy = moveEntry and moveEntry.accuracy or 0,
 			})
 		end
-		local abilityEntry = AbilityData.ABILITIES[pokemon.ability + 1]
+		local abilityEntry = AbilityData.ABILITIES[(pokemon.ability or 0) + 1]
 		table.insert(partyData, {
 			slot = i,
 			pokemonID = pokemon.pokemonID,
@@ -380,7 +799,7 @@ function Network.exportFullState()
 			abilityID = pokemon.ability or 0,
 			nature = pokemon.nature or 0,
 			heldItem = pokemon.heldItem or 0,
-			heldItemName = (ItemData.ITEMS and ItemData.ITEMS[pokemon.heldItem + 1] and ItemData.ITEMS[pokemon.heldItem + 1].name) or "None",
+			heldItemName = (pokemon.heldItem and pokemon.heldItem > 0 and ItemData.ITEMS and ItemData.ITEMS[pokemon.heldItem] and ItemData.ITEMS[pokemon.heldItem].name) or "None",
 			status = pokemon.status or 0,
 			nickname = pokemon.nickname or "",
 			experience = pokemon.experience or 0,
@@ -390,42 +809,77 @@ function Network.exportFullState()
 		})
 	end
 
-	-- Build enemy data (if in battle)
-	local enemyData = nil
-	local enemyPokemon = program.getEnemyPokemon()
-	if battleHandler:isInBattle() and enemyPokemon and MiscUtils.validPokemonData(enemyPokemon) then
-		local pokemonEntry = PokemonData.POKEMON[enemyPokemon.pokemonID + 1]
+	-- Helper: build enemy data table from a pokemon data object
+	local function buildEnemyData(enemyPoke)
+		local pokemonEntry = PokemonData.POKEMON[enemyPoke.pokemonID + 1]
 		local movesArray = {}
-		for j, moveID in ipairs(enemyPokemon.moveIDs or {}) do
+		for j, moveID in ipairs(enemyPoke.moveIDs or {}) do
 			local moveEntry = MoveData.MOVES[moveID + 1]
 			table.insert(movesArray, {
 				id = moveID,
 				name = moveEntry and moveEntry.name or "---",
-				pp = enemyPokemon.movePPs and enemyPokemon.movePPs[j] or 0,
+				pp = enemyPoke.movePPs and enemyPoke.movePPs[j] or 0,
 				type = moveEntry and moveEntry.type or "",
 				category = moveEntry and moveEntry.category or "",
 				power = moveEntry and moveEntry.power or 0,
 				accuracy = moveEntry and moveEntry.accuracy or 0,
 			})
 		end
-		local abilityEntry = AbilityData.ABILITIES[(enemyPokemon.ability or 0) + 1]
-		enemyData = {
-			pokemonID = enemyPokemon.pokemonID,
+		local abilityEntry = AbilityData.ABILITIES[(enemyPoke.ability or 0) + 1]
+		local catchRate = nil
+		if program.isWildBattle() then
+			local ok, cr = pcall(function() return RomReader.getSpeciesCatchRate(enemyPoke.pokemonID) end)
+			if ok then catchRate = cr end
+		end
+		return {
+			pokemonID = enemyPoke.pokemonID,
 			name = pokemonEntry and pokemonEntry.name or "Unknown",
 			types = pokemonEntry and pokemonEntry.type or {},
-			level = enemyPokemon.level or 0,
-			curHP = enemyPokemon.curHP or 0,
-			maxHP = enemyPokemon.stats and enemyPokemon.stats.HP or 0,
-			stats = enemyPokemon.stats or {},
+			level = enemyPoke.level or 0,
+			curHP = enemyPoke.curHP or 0,
+			maxHP = enemyPoke.stats and enemyPoke.stats.HP or 0,
+			stats = enemyPoke.stats or {},
 			moves = movesArray,
 			ability = abilityEntry and abilityEntry.name or "Unknown",
-			abilityID = enemyPokemon.ability or 0,
+			abilityID = enemyPoke.ability or 0,
 			isWild = program.isWildBattle(),
-			statStages = enemyPokemon.statStages or nil,
-			heldItem = enemyPokemon.heldItem or 0,
-			heldItemName = (ItemData.ITEMS and ItemData.ITEMS[(enemyPokemon.heldItem or 0) + 1] and ItemData.ITEMS[(enemyPokemon.heldItem or 0) + 1].name) or "None",
-			status = enemyPokemon.status or 0,
+			statStages = enemyPoke.statStages or nil,
+			heldItem = enemyPoke.heldItem or 0,
+			heldItemName = ((enemyPoke.heldItem or 0) > 0 and ItemData.ITEMS and ItemData.ITEMS[enemyPoke.heldItem] and ItemData.ITEMS[enemyPoke.heldItem].name) or "None",
+			status = enemyPoke.status or 0,
+			catchRate = catchRate,
 		}
+	end
+
+	-- Build enemy data (if in battle)
+	local enemyData = nil
+	local enemiesArray = {}
+	local isDoubleBattle = false
+	if battleHandler:isInBattle() then
+		-- Export all enemy slots (supports double/triple battles)
+		local battleData = battleHandler:getBattleData()
+		local enemyBattleData = battleData and battleData["enemy"]
+		if enemyBattleData and enemyBattleData.slots then
+			for slotIdx = 1, #enemyBattleData.slots do
+				local slot = enemyBattleData.slots[slotIdx]
+				local poke = slot and slot.activePokemon
+				if poke and MiscUtils.validPokemonData(poke) then
+					table.insert(enemiesArray, buildEnemyData(poke))
+				end
+			end
+		end
+		isDoubleBattle = #enemiesArray > 1
+		-- Keep backward-compatible single enemy (first slot)
+		if #enemiesArray > 0 then
+			enemyData = enemiesArray[1]
+		else
+			-- Fallback: use program.getEnemyPokemon() for single battle
+			local enemyPokemon = program.getEnemyPokemon()
+			if enemyPokemon and MiscUtils.validPokemonData(enemyPokemon) then
+				enemyData = buildEnemyData(enemyPokemon)
+				enemiesArray = { enemyData }
+			end
+		end
 	end
 
 	-- Build badge data
@@ -446,7 +900,7 @@ function Network.exportFullState()
 	local healingItems = program.getHealingItems() or {}
 	local healingList = {}
 	for itemID, qty in pairs(healingItems) do
-		local itemEntry = ItemData.ITEMS and ItemData.ITEMS[itemID + 1]
+		local itemEntry = ItemData.ITEMS and ItemData.ITEMS[itemID]
 		table.insert(healingList, {
 			id = itemID,
 			name = itemEntry and itemEntry.name or ("Item " .. itemID),
@@ -454,12 +908,107 @@ function Network.exportFullState()
 		})
 	end
 
-	-- Get lead pokemon stat stages (only available in battle)
+	-- Ball inventory: scan the Poke Ball pocket for ball IDs 1-16 + 576 Dream Ball
+	-- During battle, bag data is at different addresses (berryBagStartBattle)
+	local ballList = {}
+	local memoryAddresses = Network.Data.memoryAddresses
+	if memoryAddresses then
+		-- Use battle addresses during battle, same as Program.lua bag scanning
+		local berryStart = memoryAddresses.berryBagStart
+		if battleHandler and battleHandler:isInBattle() and memoryAddresses.berryBagStartBattle then
+			berryStart = memoryAddresses.berryBagStartBattle
+			-- Sanity check: battle bag may not be set up yet in first few frames
+			local testVal = Memory.read_u32_le(memoryAddresses.itemStartBattle or 0)
+			local testId = bit.band(testVal, 0xFFFF)
+			local testQty = bit.band(bit.rshift(testVal, 16), 0xFFFF)
+			if testQty > 1000 or testId > 600 then
+				berryStart = memoryAddresses.berryBagStart -- fall back to non-battle
+			end
+		end
+
+		if berryStart then
+			local BALL_IDS = {}
+			for id = 1, 16 do BALL_IDS[id] = true end
+			BALL_IDS[576] = true -- Dream Ball (Gen 5)
+
+			local gen = gameInfo and gameInfo.GEN or 4
+			if gen == 4 then
+				-- Gen 4 bag layout: ...Medicine(40) → Berries(64) → PokeBalls(15) → BattleItems(30)...
+				-- Poke Ball pocket is right after berries: berryStart + 64 slots × 4 bytes = +0x100
+				local addr = berryStart + 0x100
+				for _ = 1, 15 do
+					local val = Memory.read_u32_le(addr)
+					local id = bit.band(val, 0xFFFF)
+					if id == 0 then break end
+					local qty = bit.band(bit.rshift(val, 16), 0xFFFF)
+					if BALL_IDS[id] and qty > 0 then
+						local itemEntry = ItemData.ITEMS and ItemData.ITEMS[id]
+						table.insert(ballList, {
+							id = id,
+							name = itemEntry and itemEntry.name or ("Ball " .. id),
+							quantity = qty,
+						})
+					end
+					addr = addr + 4
+				end
+			else
+				-- Gen 5: Scan from berryStart through remaining pockets (skip empty slots)
+				local addr = berryStart
+				local consecutiveZeros = 0
+				for _ = 1, 400 do
+					local val = Memory.read_u32_le(addr)
+					local id = bit.band(val, 0xFFFF)
+					if id == 0 then
+						consecutiveZeros = consecutiveZeros + 1
+						if consecutiveZeros > 30 then break end
+					else
+						consecutiveZeros = 0
+						local qty = bit.band(bit.rshift(val, 16), 0xFFFF)
+						if BALL_IDS[id] and qty > 0 then
+							local itemEntry = ItemData.ITEMS and ItemData.ITEMS[id]
+							table.insert(ballList, {
+								id = id,
+								name = itemEntry and itemEntry.name or ("Ball " .. id),
+								quantity = qty,
+							})
+						end
+					end
+					addr = addr + 4
+				end
+			end
+		end
+	end
+
+	-- Get lead pokemon stat stages and active pokemon info (only available in battle)
 	local leadStatStages = nil
+	local activeBattlePID = nil
+	local activeBattleSlot = nil
 	if battleHandler:isInBattle() then
+		-- Read active PID directly from battle memory (always current, even mid-switch)
+		local ok, pid = pcall(function() return battleHandler:getActivePlayerPID() end)
+		if ok and pid then
+			activeBattlePID = pid
+		end
+
+		-- Fallback to cached playerPokemon PID
 		local playerPokemon = program.getPlayerPokemon()
+		if not activeBattlePID and playerPokemon then
+			activeBattlePID = playerPokemon.pid or nil
+		end
+
+		-- Get stat stages from cached playerPokemon
 		if playerPokemon and playerPokemon.statStages then
 			leadStatStages = playerPokemon.statStages
+		end
+
+		-- Find which party slot matches the active PID
+		if activeBattlePID then
+			for idx, pokemon in ipairs(fullParty) do
+				if pokemon.pid == activeBattlePID then
+					activeBattleSlot = idx
+					break
+				end
+			end
 		end
 	end
 
@@ -529,6 +1078,8 @@ function Network.exportFullState()
 		gen = gameInfo and gameInfo.GEN or 0,
 		party = partyData,
 		enemy = enemyData,
+		enemies = #enemiesArray > 0 and enemiesArray or nil,
+		isDoubleBattle = isDoubleBattle,
 		inBattle = battleHandler:isInBattle(),
 		badges = badgeList,
 		badgeCount = 0,
@@ -536,9 +1087,12 @@ function Network.exportFullState()
 		timerSeconds = tracker.getTimerSeconds(),
 		location = tracker.getCurrentAreaName() or "",
 		healingItems = healingList,
+		ballItems = ballList,
 		pokecenterCount = tracker.getPokecenterCount(),
 		runOver = tracker.hasRunEnded(),
 		leadStatStages = leadStatStages,
+		activeBattlePID = activeBattlePID,
+		activeBattleSlot = activeBattleSlot,
 		encounters = encountersExport,
 	}
 

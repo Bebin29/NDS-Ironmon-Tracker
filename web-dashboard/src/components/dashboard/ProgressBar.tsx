@@ -1,8 +1,10 @@
 "use client";
 
+import { useState } from "react";
 import { BadgeIcon } from "@/components/ui/Badge";
 import { ConnectionStatus } from "@/components/ui/ConnectionStatus";
 import { getLevelCap, getNextGymLeader } from "@/lib/game-data";
+import type { RomTrainer } from "@/lib/types";
 
 function formatTimer(seconds: number): string {
   const h = Math.floor(seconds / 3600);
@@ -19,6 +21,8 @@ export function ProgressBar({
   connected,
   runOver,
   pokecenterCount,
+  onResetRun,
+  romTrainers,
 }: {
   gameName: string;
   badges: number[];
@@ -27,9 +31,12 @@ export function ProgressBar({
   connected: boolean;
   runOver: boolean;
   pokecenterCount: number;
+  onResetRun?: () => void;
+  romTrainers?: Map<number, RomTrainer>;
 }) {
+  const [confirmReset, setConfirmReset] = useState(false);
   const badgeCount = badges.filter((b) => b === 1).length;
-  const levelCap = getLevelCap(badgeCount, gameName);
+  const levelCap = getLevelCap(badgeCount, gameName, romTrainers);
   const nextGym = getNextGymLeader(badgeCount, gameName);
 
   return (
@@ -89,6 +96,35 @@ export function ProgressBar({
         </span>
         <div className="h-6 w-px bg-pine-border" />
         <ConnectionStatus connected={connected} />
+        {onResetRun && (
+          <>
+            <div className="h-6 w-px bg-pine-border" />
+            {confirmReset ? (
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] uppercase tracking-wider text-pine-warning">Reset?</span>
+                <button
+                  onClick={() => { onResetRun(); setConfirmReset(false); }}
+                  className="rounded bg-pine-danger px-2 py-0.5 text-[10px] font-bold uppercase text-white hover:bg-red-500 transition-colors"
+                >
+                  Yes
+                </button>
+                <button
+                  onClick={() => setConfirmReset(false)}
+                  className="rounded bg-pine-border px-2 py-0.5 text-[10px] font-bold uppercase text-pine-muted hover:text-pine-text transition-colors"
+                >
+                  No
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setConfirmReset(true)}
+                className="rounded border border-pine-border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-pine-muted hover:border-pine-accent hover:text-pine-accent transition-colors"
+              >
+                New Run
+              </button>
+            )}
+          </>
+        )}
       </div>
     </div>
   );

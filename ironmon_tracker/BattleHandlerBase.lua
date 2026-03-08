@@ -184,6 +184,18 @@ function BattleHandlerBase:_getPlayerParty()
     return playerParty
 end
 
+--- Returns the player's party from battle memory as a sequential (1-indexed) array.
+function BattleHandlerBase:getBattleParty()
+    local rawParty = self:_getPlayerParty()
+    local result = {}
+    for monIndex = 0, 5, 1 do
+        if rawParty[monIndex] then
+            table.insert(result, rawParty[monIndex])
+        end
+    end
+    return result
+end
+
 function BattleHandlerBase:_hasPartyWiped()
     local party = self:_getPlayerParty()
     if next(party) == nil then
@@ -307,6 +319,28 @@ end
 
 function BattleHandlerBase:getPlayerSlotIndex()
     return self._battleData["player"].slotIndex or 1
+end
+
+--- Reads the PID of the currently active player Pokemon directly from battle memory.
+--- This is always up-to-date even during switch transitions, unlike getActivePokemonInBattle().
+function BattleHandlerBase:getActivePlayerPID()
+    if not self._inBattle then return nil end
+    local playerData = self._battleData["player"]
+    if not playerData or not playerData.slots or #playerData.slots == 0 then
+        -- Battle data not yet fetched, read PID base directly
+        if playerData and playerData.PIDBase then
+            local pid = Memory.read_u32_le(playerData.PIDBase)
+            if pid ~= 0 then return pid end
+        end
+        return nil
+    end
+    local slotIndex = playerData.slotIndex or 1
+    local battler = playerData.slots[slotIndex]
+    if battler and battler.activePIDAddress then
+        local pid = Memory.read_u32_le(battler.activePIDAddress)
+        if pid ~= 0 then return pid end
+    end
+    return nil
 end
 
 function BattleHandlerBase._onBattleFetchFrameCounter(self)

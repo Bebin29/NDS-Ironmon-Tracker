@@ -21,12 +21,13 @@ const TYPE_COLORS: Record<string, string> = {
 };
 
 export function TypeBadge({ type }: { type: string }) {
-  const colorClass = TYPE_COLORS[type?.toUpperCase()] || "bg-pine-muted";
+  if (!type) return null;
+  const colorClass = TYPE_COLORS[type.toUpperCase()] || "bg-pine-muted";
   return (
     <span
       className={`${colorClass} inline-block rounded-sm px-1.5 py-px text-[10px] font-bold uppercase text-white`}
     >
-      {type?.toUpperCase() || "???"}
+      {type.toUpperCase()}
     </span>
   );
 }

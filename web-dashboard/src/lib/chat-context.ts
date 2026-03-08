@@ -1,11 +1,14 @@
-import type { TrackerState, StatStages, GraveyardEntry } from "./types";
+import type { TrackerState, StatStages, GraveyardEntry, RomTrainer, RomEvolution } from "./types";
+import type { RouteClaimEntry } from "@/hooks/useEncounterChecklist";
 import { getLevelCap, getNextGymLeader } from "./game-data";
-import { NATURE_NAMES, STATUS_NAMES } from "./types";
+import { NATURE_NAMES, STATUS_NAMES, getActiveBattlePokemon } from "./types";
 import { getAbilityShortDesc } from "./ability-effects";
 import { getItemShortDesc } from "./item-effects";
 import { getStatStageMult, calculateMoveMatchup, type DamageOptions } from "./damage-calc";
 import { isSTAB, getDefensiveWeaknesses, getAttackMultiplier } from "./type-effectiveness";
 import { analyzeSwitchins } from "./switchin-calc";
+import { getUpcomingTrainers } from "./trainer-data";
+import { findBaseForm, getEvoChain } from "@/hooks/useEvoData";
 
 const ALL_TYPES = [
   "NORMAL", "FIRE", "WATER", "GRASS", "ELECTRIC", "ICE",
@@ -42,12 +45,12 @@ function formatStatStages(stages?: StatStages): string {
   return parts.length > 0 ? parts.join(", ") : "";
 }
 
-export function buildSystemPrompt(state: TrackerState | null, deaths?: GraveyardEntry[]): string {
+export function buildSystemPrompt(state: TrackerState | null, deaths?: GraveyardEntry[], encounterClaims?: Record<string, RouteClaimEntry>, romTrainers?: Map<number, RomTrainer>, romEvolutions?: Map<string, RomEvolution[]>): string {
   if (!state) {
     return `You are a concise Pokemon Ironmon/Nuzlocke advisor. The tracker is not connected — answer general strategy questions. Keep answers short and direct.`;
   }
 
-  const levelCap = getLevelCap(state.badgeCount, state.gameName);
+  const levelCap = getLevelCap(state.badgeCount, state.gameName, romTrainers);
   const nextGym = getNextGymLeader(state.badgeCount, state.gameName);
   const genLabel = state.gen === 4 ? "Gen 4" : state.gen === 5 ? "Gen 5" : `Gen ${state.gen}`;
 
@@ -57,11 +60,14 @@ export function buildSystemPrompt(state: TrackerState | null, deaths?: Graveyard
       const nature = NATURE_NAMES[p.nature] || "???";
       const natureEffect = getNatureEffect(p.nature);
       const moves = p.moves
-        .filter((m) => m.id > 0)
+        .filter((m) => m.id > 0 && m.name)
         .map((m) => m.name)
         .join(", ");
       const levelsToCapDiff = levelCap - p.level;
+      const activeMon = getActiveBattlePokemon(state);
+      const isActiveBattler = state.inBattle && activeMon != null && p.pid === activeMon.pid;
       const flags = [
+        isActiveBattler ? "ACTIVE IN BATTLE" : null,
         p.curHP === 0 && p.maxHP > 0 ? "DEAD" : null,
         p.level > levelCap ? "OVERLEVEL" : null,
         p.level === levelCap ? "AT CAP" : null,
@@ -82,15 +88,36 @@ export function buildSystemPrompt(state: TrackerState | null, deaths?: Graveyard
       else if (hasFrustration) friendshipNote = ` | Frustration power: ${getFrustrationPower(p.friendship)}`;
 
       const statsStr = `HP:${p.stats.HP} ATK:${p.stats.ATK} DEF:${p.stats.DEF} SPA:${p.stats.SPA} SPD:${p.stats.SPD} SPE:${p.stats.SPE}`;
-      return `${p.nickname || p.name} (${p.name}) Lv.${p.level} ${p.types.join("/")} | ${hpPct}% HP | ${abilityStr} | ${nature} (${natureEffect}) | Item: ${itemStr} | Stats: ${statsStr} | Moves: ${moves}${friendshipNote}${flags ? ` [${flags}]` : ""}`;
+
+      // Evolution info
+      let evoNote = "";
+      if (romEvolutions && romEvolutions.size > 0) {
+        const evos = romEvolutions.get(String(p.pokemonID));
+        if (evos && evos.length > 0) {
+          const evoDescs = evos.map((e) => {
+            let method = e.method;
+            if (e.method === "Level Up" && e.param > 0) method = `Lv.${e.param}`;
+            else if (e.paramName) method = `${e.method}: ${e.paramName}`;
+            return `${e.targetName} (${method})`;
+          });
+          evoNote = ` | Evolves: ${evoDescs.join(", ")}`;
+        }
+      }
+
+      return `${p.nickname || p.name} (${p.name}) Lv.${p.level} ${p.types.filter(Boolean).join("/")} | ${hpPct}% HP | ${abilityStr} | ${nature} (${natureEffect}) | Item: ${itemStr} | Stats: ${statsStr} | Moves: ${moves}${friendshipNote}${evoNote}${flags ? ` [${flags}]` : ""}`;
     })
     .join("\n");
 
   let battleInfo = "";
   if (state.inBattle && state.enemy) {
+    const allEnemies = state.enemies && state.enemies.length > 0 ? state.enemies : [state.enemy];
+    const isDoubleBattle = allEnemies.length > 1;
+    if (isDoubleBattle) {
+      battleInfo += `\nDOUBLE BATTLE (${allEnemies.length} enemies active)`;
+    }
     const e = state.enemy;
     const eMoves = e.moves
-      .filter((m) => m.id > 0)
+      .filter((m) => m.id > 0 && m.name)
       .map((m) => m.name)
       .join(", ");
     const abilityNote = e.abilityID > 0 ? getAbilityShortDesc(e.abilityID) : null;
@@ -104,12 +131,12 @@ export function buildSystemPrompt(state: TrackerState | null, deaths?: Graveyard
       : "None";
 
     const enemyStatusName = e.status && e.status > 0 ? STATUS_NAMES[e.status] || null : null;
-    battleInfo = `\nBATTLE: ${e.isWild ? "Wild" : "Trainer"} ${e.name} Lv.${e.level} ${e.types.join("/")} | HP: ${e.curHP}/${e.maxHP} | Ability: ${abilityStr} | Item: ${enemyItemStr}${enemyStatusName ? ` | Status: ${enemyStatusName}` : ""} | Known moves: ${eMoves || "none"}`;
+    battleInfo = `\nBATTLE: ${e.isWild ? "Wild" : "Trainer"} ${e.name} Lv.${e.level} ${e.types.filter(Boolean).join("/")} | HP: ${e.curHP}/${e.maxHP} | Ability: ${abilityStr} | Item: ${enemyItemStr}${enemyStatusName ? ` | Status: ${enemyStatusName}` : ""} | Known moves: ${eMoves || "none"}`;
     if (enemyStages) battleInfo += ` | Enemy stat stages: ${enemyStages}`;
     if (leadStages) battleInfo += ` | Your stat stages: ${leadStages}`;
 
     // Effective speed comparison
-    const lead = state.party.find((p) => p.curHP > 0 && p.maxHP > 0);
+    const lead = getActiveBattlePokemon(state);
     if (lead) {
       let ownSpd = lead.stats.SPE;
       let enemySpd = e.stats.SPE;
@@ -169,15 +196,35 @@ export function buildSystemPrompt(state: TrackerState | null, deaths?: Graveyard
     }
 
     // Switch-in ranking
-    const switchAnalysis = analyzeSwitchins(state.party, e);
+    const switchAnalysis = analyzeSwitchins(state.party, e, lead?.pid);
     if (switchAnalysis.candidates.length > 0) {
       const switchLines = switchAnalysis.candidates.slice(0, 3).map((c, i) => {
         const speedStr = c.isFaster === true ? "faster" : c.isFaster === false ? "slower" : "speed tie";
         const worstHit = c.worstEnemyMove ? `worst hit: ${c.worstEnemyMove} (${c.worstDamagePercent}%)` : "no known enemy moves";
+        const expectedHit = c.expectedDamagePercent > 0 ? `expected damage: ~${c.expectedDamagePercent}%` : "";
         const bestMove = c.bestOwnMove ? `best move: ${c.bestOwnMove} (${c.bestDamagePercent}%${c.bestKO ? `, ${c.bestKO}` : ""})` : "no damaging moves";
-        return `#${i + 1} ${c.pokemon.nickname || c.pokemon.name} (${c.pokemon.name}) [${c.rating}] score=${c.totalScore} | ${worstHit} | ${bestMove} | ${speedStr}`;
+        const intimidateNote = c.hasIntimidate ? " [has Intimidate — lowers enemy ATK on switch]" : "";
+        const topPrediction = c.enemyMovePredictions
+          .filter((p) => p.damagePercent > 0)
+          .sort((a, b) => b.probability - a.probability)[0];
+        const likelyMove = topPrediction ? `likely enemy move: ${topPrediction.move.name} (${Math.round(topPrediction.probability * 100)}% chance, ${Math.round(topPrediction.damagePercent)}% dmg)` : "";
+        return `#${i + 1} ${c.pokemon.nickname || c.pokemon.name} (${c.pokemon.name}) [${c.rating}] score=${c.totalScore} | ${worstHit}${expectedHit ? ` | ${expectedHit}` : ""}${likelyMove ? ` | ${likelyMove}` : ""} | ${bestMove} | ${speedStr}${intimidateNote}`;
       });
       battleInfo += `\nSWITCH-IN RANKING:\n${switchLines.join("\n")}`;
+    }
+
+    // Additional enemies in double battles
+    if (isDoubleBattle) {
+      for (let ei = 1; ei < allEnemies.length; ei++) {
+        const e2 = allEnemies[ei];
+        const e2Moves = e2.moves.filter((m) => m.id > 0 && m.name).map((m) => m.name).join(", ");
+        const e2AbilityNote = e2.abilityID > 0 ? getAbilityShortDesc(e2.abilityID) : null;
+        const e2AbilityStr = e2AbilityNote ? `${e2.ability} (${e2AbilityNote})` : e2.ability;
+        const e2ItemStr = e2.heldItemName && e2.heldItemName !== "None" ? e2.heldItemName : "None";
+        const e2StatusName = e2.status && e2.status > 0 ? STATUS_NAMES[e2.status] || null : null;
+        battleInfo += `\nENEMY #${ei + 1}: ${e2.name} Lv.${e2.level} ${e2.types.filter(Boolean).join("/")} | HP: ${e2.curHP}/${e2.maxHP} | Ability: ${e2AbilityStr} | Item: ${e2ItemStr}${e2StatusName ? ` | Status: ${e2StatusName}` : ""} | Known moves: ${e2Moves || "none"}`;
+        battleInfo += ` | Stats: ATK ${e2.stats.ATK} DEF ${e2.stats.DEF} SPA ${e2.stats.SPA} SPD ${e2.stats.SPD} SPE ${e2.stats.SPE}`;
+      }
     }
   }
 
@@ -191,10 +238,19 @@ export function buildSystemPrompt(state: TrackerState | null, deaths?: Graveyard
       const route = state.encounters!.routes[routeName];
       if (!route) return null;
       const seen = route.seen.map((p) => p.name).join(", ");
-      return `${routeName}: ${route.seen.length}/${route.totalPokemon || "?"}${seen ? ` (${seen})` : ""}`;
+      const claim = encounterClaims?.[routeName];
+      const statusTag = claim
+        ? ` [${claim.status.toUpperCase()}${claim.pokemonName ? `: ${claim.pokemonName}` : ""}]`
+        : route.seen.length > 0 ? " [UNCLAIMED]" : "";
+      return `${routeName}: ${route.seen.length}/${route.totalPokemon || "?"}${seen ? ` (${seen})` : ""}${statusTag}`;
     }).filter(Boolean);
     if (routeLines.length > 0) {
-      encounterInfo = `\nROUTE ENCOUNTERS:\n${routeLines.join("\n")}`;
+      const claimValues = encounterClaims ? Object.values(encounterClaims) : [];
+      const caughtCount = claimValues.filter((c) => c.status === "caught").length;
+      const failedCount = claimValues.filter((c) => c.status === "failed").length;
+      const skippedCount = claimValues.filter((c) => c.status === "skipped").length;
+      const summaryLine = `Nuzlocke encounters: ${caughtCount} caught, ${failedCount} failed, ${skippedCount} dupes skipped`;
+      encounterInfo = `\nROUTE ENCOUNTERS (${summaryLine}):\n${routeLines.join("\n")}`;
     }
   }
 
@@ -235,6 +291,42 @@ export function buildSystemPrompt(state: TrackerState | null, deaths?: Graveyard
     }
   }
 
+  // Upcoming trainer info
+  let trainerInfo = "";
+  const upcoming = getUpcomingTrainers(state.badgeCount, state.gameName);
+  if (upcoming.length > 0) {
+    const trainerLines = upcoming.map((t) => {
+      // If ROM data available, try to overlay ROM team onto hardcoded metadata
+      let team = t.team;
+      if (romTrainers && romTrainers.size > 0) {
+        for (const rt of romTrainers.values()) {
+          if ((rt.badgeNumber === t.badge && rt.trainerType === 2) || rt.name === t.name) {
+            if (rt.pokemon.length > 0) {
+              team = rt.pokemon.map((mon) => ({
+                name: mon.name,
+                pokemonID: mon.speciesID,
+                level: mon.level,
+                types: mon.types,
+                moves: mon.moves.filter((m) => m.id > 0).map((m) => m.name),
+                ability: mon.ability || undefined,
+                item: mon.heldItemName !== "None" ? mon.heldItemName : undefined,
+              }));
+            }
+            break;
+          }
+        }
+      }
+
+      const teamStr = team.map((mon) =>
+        `${mon.name} Lv.${mon.level} (${mon.types.join("/")}) — ${mon.moves.join(", ")}${mon.item ? ` [${mon.item}]` : ""}${mon.ability ? ` {${mon.ability}}` : ""}`
+      ).join("\n  ");
+      const tipsStr = t.tips ? `\n  Tips: ${t.tips.join("; ")}` : "";
+      return `${t.role === "gym" ? `Gym ${t.badge}` : t.role === "elite4" ? "Elite 4" : "Champion"}: ${t.name} (${t.type}) at ${t.location}\n  ${teamStr}${tipsStr}`;
+    });
+    const romLabel = romTrainers && romTrainers.size > 0 ? " (ROM data — may be randomized)" : "";
+    trainerInfo = `\nUPCOMING TRAINERS${romLabel}:\n${trainerLines.join("\n")}`;
+  }
+
   // Graveyard / death history
   let graveyardInfo = "";
   if (deaths && deaths.length > 0) {
@@ -268,7 +360,7 @@ ${state.gameName} (${genLabel}) | ${state.location} | ${state.badgeCount}/8 badg
 Level cap: ${levelCap} | Next gym: ${nextGym.name} (${nextGym.type})
 Pokecenter heals: ${state.pokecenterCount}${state.pokecenterCount <= 2 ? " (CRITICAL — very few heals left!)" : state.pokecenterCount <= 5 ? " (low)" : ""}
 Timer: ${timerStr}
-Items: ${items || "none"}${teamWeaknessInfo}${encounterInfo}${graveyardInfo}
+Items: ${items || "none"}${teamWeaknessInfo}${trainerInfo}${encounterInfo}${graveyardInfo}
 ${battleInfo}
 
 PARTY:

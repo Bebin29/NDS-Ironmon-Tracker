@@ -2,8 +2,9 @@
 
 import { useState, useCallback } from "react";
 import type { ChatMessage, GraveyardEntry } from "@/lib/types";
+import type { RouteClaimEntry } from "@/hooks/useEncounterChecklist";
 
-export function useChat(model?: string, deaths?: GraveyardEntry[]) {
+export function useChat(model?: string, deaths?: GraveyardEntry[], encounterClaims?: Record<string, RouteClaimEntry>) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(false);
 
@@ -22,6 +23,7 @@ export function useChat(model?: string, deaths?: GraveyardEntry[]) {
             messages: updatedMessages,
             ...(model ? { model } : {}),
             ...(deaths && deaths.length > 0 ? { deaths } : {}),
+            ...(encounterClaims && Object.keys(encounterClaims).length > 0 ? { encounterClaims } : {}),
           }),
         });
 
@@ -50,7 +52,7 @@ export function useChat(model?: string, deaths?: GraveyardEntry[]) {
         setLoading(false);
       }
     },
-    [messages, model, deaths]
+    [messages, model, deaths, encounterClaims]
   );
 
   const clearChat = useCallback(() => setMessages([]), []);

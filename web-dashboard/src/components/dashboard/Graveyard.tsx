@@ -22,45 +22,31 @@ export function Graveyard({
   if (deaths.length === 0) return null;
 
   return (
-    <div className="rounded border border-pine-border bg-pine-surface p-3 space-y-2">
-      <div className="flex items-center justify-between">
-        <h2 className="text-xs font-bold uppercase tracking-[1.5px] text-pine-danger">
-          Graveyard ({deaths.length})
-        </h2>
-        <button
-          onClick={onClear}
-          className="text-[9px] uppercase tracking-wider text-pine-muted hover:text-pine-text transition-colors"
+    <div className="space-y-1.5">
+      {deaths.map((entry) => (
+        <div
+          key={entry.pid}
+          className="flex items-start gap-2 text-[10px]"
         >
-          Clear
-        </button>
-      </div>
-
-      <div className="space-y-1.5">
-        {deaths.map((entry) => (
-          <div
-            key={entry.pid}
-            className="flex items-start gap-2 text-[10px]"
-          >
-            <span className="text-pine-danger">&#x1F480;</span>
-            <div className="min-w-0 flex-1">
-              <div className="font-bold text-pine-text">
-                {entry.nickname && entry.nickname !== entry.name
-                  ? `${entry.nickname} (${entry.name})`
-                  : entry.name}
-              </div>
-              <div className="text-pine-muted">
-                Lv.{entry.level} &middot; {entry.location} &middot;{" "}
-                {timeAgo(entry.timestamp)}
-              </div>
-              {entry.killedBy && (
-                <div className="text-pine-danger/70">
-                  vs {entry.wasWildEncounter ? "Wild " : ""}{entry.killedBy} Lv.{entry.killedByLevel}
-                </div>
-              )}
+          <span className="text-pine-danger">&#x1F480;</span>
+          <div className="min-w-0 flex-1">
+            <div className="font-bold text-pine-text">
+              {entry.nickname && entry.nickname !== entry.name
+                ? `${entry.nickname} (${entry.name})`
+                : entry.name}
             </div>
+            <div className="text-pine-muted">
+              Lv.{entry.level} &middot; {entry.location} &middot;{" "}
+              {timeAgo(entry.timestamp)}
+            </div>
+            {entry.killedBy && (
+              <div className="text-pine-danger/70">
+                vs {entry.wasWildEncounter ? "Wild " : ""}{entry.killedBy} Lv.{entry.killedByLevel}
+              </div>
+            )}
           </div>
-        ))}
-      </div>
+        </div>
+      ))}
     </div>
   );
 }

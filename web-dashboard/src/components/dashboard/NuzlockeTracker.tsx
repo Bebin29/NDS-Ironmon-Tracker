@@ -1,6 +1,6 @@
 "use client";
 
-import type { TrackerState } from "@/lib/types";
+import type { TrackerState, RomTrainer } from "@/lib/types";
 import {
   checkNuzlockeWarnings,
   getDeadPokemon,
@@ -8,22 +8,17 @@ import {
 import { getLevelCap, getNextGymLeader } from "@/lib/game-data";
 import { useState } from "react";
 
-export function NuzlockeTracker({ state }: { state: TrackerState }) {
+export function NuzlockeTracker({ state, romTrainers }: { state: TrackerState; romTrainers?: Map<number, RomTrainer> }) {
   const [soulLinkNotes, setSoulLinkNotes] = useState("");
-  const warnings = checkNuzlockeWarnings(state);
+  const warnings = checkNuzlockeWarnings(state, romTrainers);
   const dead = getDeadPokemon(state);
   const badgeCount = state.badges.filter((b) => b === 1).length;
-  const levelCap = getLevelCap(badgeCount, state.gameName);
+  const levelCap = getLevelCap(badgeCount, state.gameName, romTrainers);
   const nextGym = getNextGymLeader(badgeCount, state.gameName);
 
   return (
     <div className="space-y-4">
-      {/* Nuzlocke Status Card */}
-      <div className="rounded border border-pine-border bg-pine-surface p-3 space-y-2">
-        <h2 className="text-xs font-bold uppercase tracking-[1.5px] text-pine-accent">
-          Nuzlocke Status
-        </h2>
-
+      <div className="space-y-2">
         <div className="flex items-center gap-2">
           <span className="text-[10px] uppercase text-pine-dim">Level Cap:</span>
           <span className="text-sm font-bold text-pine-text">{levelCap}</span>

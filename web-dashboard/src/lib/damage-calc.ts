@@ -120,12 +120,14 @@ export function calculateDamage(
     if (options?.attackerStages) {
       const stageKey = isPhysical ? "ATK" : "SPA";
       const rawStage = options.attackerStages[stageKey];
+      // Crits: ignore negative ATK stages (use neutral 6), keep positive as-is
       const stage = atkStageOverride !== undefined ? Math.max(rawStage, atkStageOverride) : rawStage;
       A = Math.floor(A * getStatStageMult(stage));
     }
     if (options?.defenderStages) {
       const stageKey = isPhysical ? "DEF" : "SPD";
       const rawStage = options.defenderStages[stageKey];
+      // Crits: ignore positive DEF stages (use neutral 6), keep negative as-is
       const stage = defStageOverride !== undefined ? Math.min(rawStage, defStageOverride) : rawStage;
       D = Math.floor(D * getStatStageMult(stage));
     }
@@ -135,6 +137,7 @@ export function calculateDamage(
     if (defAbilityMod !== 1) D = Math.floor(D * defAbilityMod);
     if (defItemMod !== 1) D = Math.floor(D * defItemMod);
 
+    if (A <= 0 || D <= 0) return { min: 0, max: 0 };
     const levelFactor = Math.floor(2 * attackerLevel / 5 + 2);
     const base = Math.floor(Math.floor(levelFactor * effectivePower * A / D) / 50 + 2);
 
@@ -158,8 +161,8 @@ export function calculateDamage(
   const normal = computeRolls();
 
   // Crit damage: 2x multiplier, ignore negative ATK stages (use max(stage, 6)),
-  // ignore positive DEF stages (use min(stage, 6)), ignore burn
-  const crit = computeRolls(6, 6, true);
+  // ignore positive DEF stages (use min(stage, 6)). Burn still applies in Gen 4.
+  const crit = computeRolls(6, 6);
   const critMin = Math.floor(crit.min * 2);
   const critMax = Math.floor(crit.max * 2);
 

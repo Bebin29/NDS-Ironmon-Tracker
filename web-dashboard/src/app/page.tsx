@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useTrackerState } from "@/hooks/useTrackerState";
 import { ProgressBar } from "@/components/dashboard/ProgressBar";
 import { PartyPanel } from "@/components/dashboard/PartyPanel";
@@ -12,11 +12,49 @@ import { RouteEncounters } from "@/components/dashboard/RouteEncounters";
 import { ChatPanel } from "@/components/chat/ChatPanel";
 import { Graveyard } from "@/components/dashboard/Graveyard";
 import { useGraveyard } from "@/hooks/useGraveyard";
+import { useEncounterChecklist } from "@/hooks/useEncounterChecklist";
+import { getActiveBattlePokemon } from "@/lib/types";
+import { TrainerPreview } from "@/components/dashboard/TrainerPreview";
+import { useTrainerData } from "@/hooks/useTrainerData";
+import { useEvoData } from "@/hooks/useEvoData";
+import { CollapsibleSection } from "@/components/ui/CollapsibleSection";
+import { getDefensiveWeaknesses } from "@/lib/type-effectiveness";
 
 export default function Dashboard() {
   const { state, connected } = useTrackerState();
-  const [chatOpen, setChatOpen] = useState(true);
+  const [runResetKey, setRunResetKey] = useState(0);
   const { deaths, clearGraveyard } = useGraveyard(state);
+  const { claims, setRouteStatus, removeRouteClaim, clearChecklist, summary: encounterSummary } = useEncounterChecklist(state);
+  const { trainers: romTrainers } = useTrainerData(state?.gameName);
+  const { evolutions: romEvolutions } = useEvoData(state?.gameName);
+
+  const resetRun = () => {
+    clearGraveyard();
+    clearChecklist();
+    setRunResetKey((k) => k + 1);
+  };
+
+  // Summary strings for collapsed sections
+  const partySummary = useMemo(() => {
+    if (!state) return "";
+    const alive = state.party.filter((p) => p.curHP > 0 && p.maxHP > 0 && p.isEgg !== 1);
+    const totalHP = alive.reduce((s, p) => s + p.curHP, 0);
+    const maxHP = alive.reduce((s, p) => s + p.maxHP, 0);
+    return `${alive.length} alive · ${totalHP}/${maxHP} HP`;
+  }, [state]);
+
+  const weaknessSummary = useMemo(() => {
+    if (!state) return "";
+    const alive = state.party.filter((p) => p.curHP > 0 && p.maxHP > 0);
+    const counts: Record<string, number> = {};
+    for (const p of alive) {
+      for (const w of getDefensiveWeaknesses(p.types)) {
+        counts[w.type] = (counts[w.type] || 0) + 1;
+      }
+    }
+    const critical = Object.values(counts).filter((c) => c >= 2).length;
+    return critical > 0 ? `${critical} shared` : "none";
+  }, [state]);
 
   if (!state) {
     return (
@@ -56,51 +94,139 @@ export default function Dashboard() {
         connected={connected}
         runOver={state.runOver}
         pokecenterCount={state.pokecenterCount}
+        onResetRun={resetRun}
+        romTrainers={romTrainers}
       />
 
       {/* Main content */}
       <div className="flex min-h-0 flex-1 gap-4 p-4 pt-0">
         {/* Left: Battle + Party + Healing */}
-        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto">
-          {state.inBattle && state.enemy && (
-            <BattleView
-              enemy={state.enemy}
-              leadPokemon={state.party.find((p) => p.curHP > 0 && p.maxHP > 0)}
-              leadStatStages={state.leadStatStages}
+        <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
+          {state.inBattle && state.enemy && (() => {
+            const enemies = state.enemies && state.enemies.length > 0 ? state.enemies : [state.enemy];
+            const isDouble = enemies.length > 1;
+            const battleLabel = state.enemy.isWild ? "Wild Battle" : isDouble ? "Double Battle" : "Trainer Battle";
+            const summaryText = isDouble
+              ? `vs ${enemies.map((e) => `${e.name} Lv.${e.level}`).join(" & ")}`
+              : `vs ${state.enemy.name} Lv.${state.enemy.level}`;
+            return (
+              <CollapsibleSection
+                id="battle"
+                title={battleLabel}
+                variant="danger"
+                defaultOpen={true}
+                summary={summaryText}
+              >
+                <BattleView
+                  enemies={enemies}
+                  leadPokemon={getActiveBattlePokemon(state)}
+                  leadStatStages={state.leadStatStages}
+                  party={state.party}
+                  ballItems={state.ballItems}
+                  gen={state.gen}
+                />
+              </CollapsibleSection>
+            );
+          })()}
+          <CollapsibleSection
+            id="party"
+            title="Party"
+            defaultOpen={!state.inBattle}
+            summary={partySummary}
+          >
+            <PartyPanel
               party={state.party}
+              enemy={state.inBattle ? state.enemy : null}
+              badgeCount={state.badgeCount}
+              gameName={state.gameName}
+              romTrainers={romTrainers}
+              evolutions={romEvolutions}
             />
-          )}
-          <PartyPanel
-            party={state.party}
-            enemy={state.inBattle ? state.enemy : null}
-            badgeCount={state.badgeCount}
-            gameName={state.gameName}
-          />
-          <TeamWeaknesses party={state.party} />
-          <RouteEncounters
-            encounters={state.encounters}
-            currentLocation={state.location}
-          />
-          <HealingInventory items={state.healingItems} />
+          </CollapsibleSection>
+          <CollapsibleSection
+            id="team-weaknesses"
+            title="Team Weaknesses"
+            variant="warning"
+            defaultOpen={false}
+            summary={weaknessSummary}
+          >
+            <TeamWeaknesses party={state.party} />
+          </CollapsibleSection>
+          <CollapsibleSection
+            id="route-encounters"
+            title="Route Encounters"
+            defaultOpen={false}
+            summary={`${encounterSummary.caught} caught · ${encounterSummary.total} routes`}
+          >
+            <RouteEncounters
+              encounters={state.encounters}
+              currentLocation={state.location}
+              claims={claims}
+              onSetStatus={setRouteStatus}
+              onRemoveClaim={removeRouteClaim}
+              summary={encounterSummary}
+            />
+          </CollapsibleSection>
+          <CollapsibleSection
+            id="healing"
+            title="Healing Items"
+            defaultOpen={false}
+            summary={`${state.healingItems.length} items`}
+          >
+            <HealingInventory items={state.healingItems} />
+          </CollapsibleSection>
         </div>
 
         {/* Right sidebar: Nuzlocke + Chat */}
-        <div className="flex w-80 shrink-0 flex-col gap-4 overflow-y-auto">
-          <NuzlockeTracker state={state} />
-          <Graveyard deaths={deaths} onClear={clearGraveyard} />
-
-          <button
-            onClick={() => setChatOpen(!chatOpen)}
-            className="rounded border border-pine-border bg-pine-surface px-3 py-2 text-xs font-bold uppercase tracking-wider text-pine-accent hover:bg-pine-border/50 transition-colors"
+        <div className="flex w-80 shrink-0 flex-col gap-2 overflow-y-auto">
+          <CollapsibleSection
+            id="trainer-preview"
+            title="Next Gym Leader"
+            defaultOpen={true}
           >
-            {chatOpen ? "▼ Hide AI Advisor" : "▶ Show AI Advisor"}
-          </button>
-
-          {chatOpen && (
-            <div className="min-h-[300px] flex-1">
-              <ChatPanel deaths={deaths} />
-            </div>
+            <TrainerPreview
+              badgeCount={state.badgeCount}
+              gameName={state.gameName}
+              party={state.party}
+              romTrainers={romTrainers}
+              inBattle={state.inBattle}
+            />
+          </CollapsibleSection>
+          <CollapsibleSection
+            id="nuzlocke"
+            title="Nuzlocke Status"
+            defaultOpen={false}
+          >
+            <NuzlockeTracker state={state} romTrainers={romTrainers} />
+          </CollapsibleSection>
+          {deaths.length > 0 && (
+            <CollapsibleSection
+              id="graveyard"
+              title={`Graveyard (${deaths.length})`}
+              variant="danger"
+              defaultOpen={false}
+              summary={`${deaths.length} dead`}
+              headerRight={
+                <button
+                  onClick={clearGraveyard}
+                  className="text-[9px] uppercase tracking-wider text-pine-muted hover:text-pine-text transition-colors"
+                >
+                  Clear
+                </button>
+              }
+            >
+              <Graveyard deaths={deaths} onClear={clearGraveyard} />
+            </CollapsibleSection>
           )}
+          <CollapsibleSection
+            id="ai-advisor"
+            title="AI Advisor"
+            defaultOpen={true}
+          >
+            <div className="min-h-[300px]">
+              <ChatPanel key={runResetKey} deaths={deaths} encounterClaims={claims} />
+            </div>
+          </CollapsibleSection>
         </div>
       </div>
     </div>

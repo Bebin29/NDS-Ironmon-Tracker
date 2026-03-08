@@ -1,4 +1,4 @@
-import type { PartyPokemon, TrackerState } from "./types";
+import type { PartyPokemon, TrackerState, RomTrainer } from "./types";
 import { getLevelCap } from "./game-data";
 
 export interface NuzlockeWarning {
@@ -7,9 +7,9 @@ export interface NuzlockeWarning {
   message: string;
 }
 
-export function checkNuzlockeWarnings(state: TrackerState): NuzlockeWarning[] {
+export function checkNuzlockeWarnings(state: TrackerState, romTrainers?: Map<number, RomTrainer>): NuzlockeWarning[] {
   const warnings: NuzlockeWarning[] = [];
-  const levelCap = getLevelCap(state.badgeCount, state.gameName);
+  const levelCap = getLevelCap(state.badgeCount, state.gameName, romTrainers);
 
   for (const pokemon of state.party) {
     if (pokemon.isEgg === 1) continue;
@@ -62,14 +62,14 @@ export function getDeadPokemon(state: TrackerState): PartyPokemon[] {
   return state.party.filter((p) => p.curHP === 0 && p.maxHP > 0);
 }
 
-export function getOverleveledPokemon(state: TrackerState): PartyPokemon[] {
-  const levelCap = getLevelCap(state.badgeCount, state.gameName);
+export function getOverleveledPokemon(state: TrackerState, romTrainers?: Map<number, RomTrainer>): PartyPokemon[] {
+  const levelCap = getLevelCap(state.badgeCount, state.gameName, romTrainers);
   return state.party.filter(
     (p) => p.isEgg !== 1 && p.level > levelCap
   );
 }
 
-export function isNearLevelCap(level: number, badgeCount: number, gameName?: string, threshold = 2): boolean {
-  const cap = getLevelCap(badgeCount, gameName);
+export function isNearLevelCap(level: number, badgeCount: number, gameName?: string, romTrainers?: Map<number, RomTrainer>, threshold = 2): boolean {
+  const cap = getLevelCap(badgeCount, gameName, romTrainers);
   return level >= cap - threshold && level <= cap;
 }

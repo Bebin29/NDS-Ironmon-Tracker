@@ -109,11 +109,72 @@ function getGameData(gameName?: string): GameGymData {
   return PLATINUM;
 }
 
-export function getLevelCap(badgeCount: number, gameName?: string): number {
+import type { RomTrainer } from "./types";
+
+/**
+ * Get the level cap for the current badge count.
+ * If romTrainers are provided, derives the cap from the actual ROM data
+ * (highest level in the next gym leader's team). Falls back to hardcoded data.
+ */
+export function getLevelCap(
+  badgeCount: number,
+  gameName?: string,
+  romTrainers?: Map<number, RomTrainer>,
+): number {
+  // Try ROM-based cap first
+  if (romTrainers && romTrainers.size > 0) {
+    const romCap = getRomLevelCap(badgeCount, romTrainers);
+    if (romCap != null) return romCap;
+  }
+  // Fallback to hardcoded
   const data = getGameData(gameName);
   if (badgeCount >= 8) return data.championCap;
   if (badgeCount < 0) return data.gyms[0].levelCap;
   return data.gyms[badgeCount]?.levelCap ?? data.championCap;
+}
+
+/**
+ * Derive level cap from ROM trainer data.
+ * Finds the gym leader (trainerType=2) for the next badge and returns
+ * the highest level in their team.
+ */
+function getRomLevelCap(
+  badgeCount: number,
+  romTrainers: Map<number, RomTrainer>,
+): number | null {
+  const nextBadge = badgeCount + 1;
+
+  // For badges 1-8: find gym leader
+  if (nextBadge >= 1 && nextBadge <= 8) {
+    for (const trainer of romTrainers.values()) {
+      if (trainer.trainerType === 2 && trainer.badgeNumber === nextBadge) {
+        return getMaxLevel(trainer);
+      }
+    }
+  }
+
+  // For badge 9+ (E4/Champion): find all trainerType=2 with badgeNumber > 8
+  // and return the highest level overall
+  if (nextBadge > 8) {
+    let maxLvl = 0;
+    for (const trainer of romTrainers.values()) {
+      if (trainer.trainerType === 2 && (trainer.badgeNumber ?? 0) > 8) {
+        const lvl = getMaxLevel(trainer);
+        if (lvl > maxLvl) maxLvl = lvl;
+      }
+    }
+    if (maxLvl > 0) return maxLvl;
+  }
+
+  return null;
+}
+
+function getMaxLevel(trainer: RomTrainer): number {
+  let max = 0;
+  for (const mon of trainer.pokemon) {
+    if (mon.level > max) max = mon.level;
+  }
+  return max;
 }
 
 export const BADGE_NAMES = [

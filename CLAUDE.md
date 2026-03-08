@@ -67,6 +67,27 @@ The codebase uses many BizHawk API globals: `memory`, `event`, `emu`, `client`, 
 
 Custom globals (module-level tables acting as singletons): `Graphics`, `GameInfo`, `PokemonData`, `MoveData`, `AbilityData`, `ItemData`, `TrainerData`, `LocationData`, `MemoryAddresses`, `Paths`, etc.
 
+## Web Dashboard (`web-dashboard/`)
+
+Next.js app that provides a browser-based companion dashboard, reading tracker state via SSE.
+
+### Key Patterns
+
+- **AI Chat context** (`src/lib/chat-context.ts`): `buildSystemPrompt(state, deaths?)` builds a detailed system prompt from live tracker state. When adding new data to the tracker, also wire it into this function so the AI advisor can reference it.
+- **Game data** (`src/lib/game-data.ts`): Level caps and gym leaders for all 9 supported games. `getLevelCap(badgeCount, gameName?)` and `getNextGymLeader(badgeCount, gameName?)` — `gameName` is optional, defaults to Platinum.
+- **Graveyard** (`src/hooks/useGraveyard.ts`): Detects party deaths by comparing HP across state updates. Auto-clears on run reset (game change or badges dropping to 0). Deaths include killer info when in battle.
+- **Nature stat mapping**: Nature ID encodes boost/penalty — `floor(id/5)` = boost index, `id % 5` = penalty index. Indices: 0=ATK, 1=DEF, 2=SPE, 3=SPA, 4=SPD. Same index = neutral nature.
+- **State flow for chat**: `page.tsx` → `ChatPanel(deaths)` → `useChat(model, deaths)` → POST `/api/chat` with `{messages, model, deaths}` → `buildSystemPrompt(state, deaths)`. The API route also calls `getCurrentState()` server-side for fresh tracker state.
+
+### Commands
+
+```bash
+cd web-dashboard
+npm install
+npm run dev          # Next.js dev server
+npx tsc --noEmit     # Type check (no build needed for validation)
+```
+
 ## Gotchas
 
 - `Program.lua` is extremely large (~41k lines) — changes here need careful context awareness

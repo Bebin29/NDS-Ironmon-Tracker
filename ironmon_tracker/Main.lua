@@ -49,6 +49,7 @@ local function Main()
 	dofile(Paths.FOLDERS.UTILS_FOLDER .. "/FrameFactory.lua")
 	dofile(Paths.FOLDERS.UTILS_FOLDER .. "/NetworkUtils.lua")
 	dofile(Paths.FOLDERS.DATA_FOLDER .. "/GameConfigurator.lua")
+	dofile(Paths.FOLDERS.DATA_FOLDER .. "/RomReader.lua")
 	dofile(Paths.FOLDERS.UTILS_FOLDER .. "/UIUtils.lua")
 	dofile(Paths.FOLDERS.DATA_FOLDER .. "/RepelDrawer.lua")
 	dofile(Paths.FOLDERS.DATA_FOLDER .. "/AnimatedSpriteManager.lua")
@@ -176,6 +177,8 @@ local function Main()
 			print("This game is not currently not supported. Terminating Lua script...")
 			return false
 		end
+		RomReader.clearCache()
+		if Network then Network.trainerDataExported = false end
 		if (gameConfiguration.gameInfo.GEN == 4) then
 			dofile(Paths.FOLDERS.CONSTANTS_FOLDER .. "/EvoDataGen4.lua")
 		else

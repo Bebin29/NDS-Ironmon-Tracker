@@ -1,6 +1,6 @@
 "use client";
 
-import type { PartyPokemon, EnemyPokemon } from "@/lib/types";
+import type { PartyPokemon, EnemyPokemon, RomTrainer, RomEvolution } from "@/lib/types";
 import { NATURE_NAMES } from "@/lib/types";
 import { PokemonSprite } from "@/components/ui/PokemonSprite";
 import { TypeBadge } from "@/components/ui/TypeBadge";
@@ -11,6 +11,7 @@ import { getAttackMultiplier, isSTAB } from "@/lib/type-effectiveness";
 import { calculateMoveMatchup, type KOChance, type DamageOptions } from "@/lib/damage-calc";
 import { isNearLevelCap } from "@/lib/nuzlocke-rules";
 import { getLevelCap } from "@/lib/game-data";
+import { EvolutionChain } from "./EvolutionChain";
 
 function MoveEffTag({ multiplier }: { multiplier: number }) {
   if (multiplier === 1) return null;
@@ -35,11 +36,11 @@ function MoveKOTag({ ko }: { ko: KOChance }) {
   return <span className={`${KO_COLORS[ko]} text-[8px] font-bold`}>{ko}</span>;
 }
 
-function PokemonCard({ pokemon, enemy, badgeCount, gameName }: { pokemon: PartyPokemon; enemy?: EnemyPokemon | null; badgeCount: number; gameName?: string }) {
+function PokemonCard({ pokemon, enemy, badgeCount, gameName, romTrainers, evolutions }: { pokemon: PartyPokemon; enemy?: EnemyPokemon | null; badgeCount: number; gameName?: string; romTrainers?: Map<number, RomTrainer>; evolutions?: Map<string, RomEvolution[]> }) {
   const isDead = pokemon.curHP === 0 && pokemon.maxHP > 0;
   const nature = NATURE_NAMES[pokemon.nature] || "???";
-  const levelCap = getLevelCap(badgeCount, gameName);
-  const nearCap = isNearLevelCap(pokemon.level, badgeCount, gameName);
+  const levelCap = getLevelCap(badgeCount, gameName, romTrainers);
+  const nearCap = isNearLevelCap(pokemon.level, badgeCount, gameName, romTrainers);
   const overCap = pokemon.level > levelCap;
 
   return (
@@ -82,7 +83,7 @@ function PokemonCard({ pokemon, enemy, badgeCount, gameName }: { pokemon: PartyP
           )}
 
           <div className="mt-1 flex gap-1">
-            {pokemon.types.map((t) => (
+            {pokemon.types.filter(Boolean).map((t) => (
               <TypeBadge key={t} type={t} />
             ))}
           </div>
@@ -144,11 +145,22 @@ function PokemonCard({ pokemon, enemy, badgeCount, gameName }: { pokemon: PartyP
           />
         ))}
       </div>
+
+      {/* Evolution Chain */}
+      {evolutions && evolutions.size > 0 && (
+        <div className="mt-2 border-t border-pine-border/50 pt-1">
+          <EvolutionChain
+            speciesID={pokemon.pokemonID}
+            speciesName={pokemon.name}
+            evolutions={evolutions}
+          />
+        </div>
+      )}
     </div>
   );
 }
 
-export function PartyPanel({ party, enemy, badgeCount, gameName }: { party: PartyPokemon[]; enemy?: EnemyPokemon | null; badgeCount: number; gameName?: string }) {
+export function PartyPanel({ party, enemy, badgeCount, gameName, romTrainers, evolutions }: { party: PartyPokemon[]; enemy?: EnemyPokemon | null; badgeCount: number; gameName?: string; romTrainers?: Map<number, RomTrainer>; evolutions?: Map<string, RomEvolution[]> }) {
   if (party.length === 0) {
     return (
       <div className="rounded border border-pine-border bg-pine-surface p-4 text-center text-sm text-pine-muted">
@@ -159,12 +171,9 @@ export function PartyPanel({ party, enemy, badgeCount, gameName }: { party: Part
 
   return (
     <div className="space-y-3">
-      <h2 className="text-xs font-bold uppercase tracking-[1.5px] text-pine-accent">
-        Party
-      </h2>
       <div className="grid gap-3 lg:grid-cols-2 xl:grid-cols-3">
         {party.map((pokemon) => (
-          <PokemonCard key={pokemon.slot} pokemon={pokemon} enemy={enemy} badgeCount={badgeCount} gameName={gameName} />
+          <PokemonCard key={pokemon.slot} pokemon={pokemon} enemy={enemy} badgeCount={badgeCount} gameName={gameName} romTrainers={romTrainers} evolutions={evolutions} />
         ))}
       </div>
     </div>

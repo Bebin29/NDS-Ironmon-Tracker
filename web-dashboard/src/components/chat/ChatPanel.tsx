@@ -10,8 +10,9 @@ import { ChatSettings } from "./ChatSettings";
 import { LoginScreen } from "./LoginScreen";
 
 import type { GraveyardEntry } from "@/lib/types";
+import type { RouteClaimEntry } from "@/hooks/useEncounterChecklist";
 
-export function ChatPanel({ deaths }: { deaths?: GraveyardEntry[] }) {
+export function ChatPanel({ deaths, encounterClaims }: { deaths?: GraveyardEntry[]; encounterClaims?: Record<string, RouteClaimEntry> }) {
   const auth = useAuth();
   const { models } = useModels(auth.authenticated);
   const [selectedModel, setSelectedModel] = useState("");
@@ -19,6 +20,7 @@ export function ChatPanel({ deaths }: { deaths?: GraveyardEntry[] }) {
   const { messages, loading, sendMessage, clearChat } = useChat(
     selectedModel || undefined,
     deaths,
+    encounterClaims,
   );
   const scrollRef = useRef<HTMLDivElement>(null);
 

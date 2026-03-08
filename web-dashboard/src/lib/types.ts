@@ -71,6 +71,13 @@ export interface EnemyPokemon {
   heldItem: number;
   heldItemName: string;
   status?: number;
+  catchRate?: number;
+}
+
+export interface BallItem {
+  id: number;
+  name: string;
+  quantity: number;
 }
 
 export interface HealingItem {
@@ -101,6 +108,8 @@ export interface TrackerState {
   gen: number;
   party: PartyPokemon[];
   enemy: EnemyPokemon | null;
+  enemies?: EnemyPokemon[];
+  isDoubleBattle?: boolean;
   inBattle: boolean;
   badges: number[];
   badgeCount: number;
@@ -108,9 +117,12 @@ export interface TrackerState {
   timerSeconds: number;
   location: string;
   healingItems: HealingItem[];
+  ballItems?: BallItem[];
   pokecenterCount: number;
   runOver: boolean;
   leadStatStages?: StatStages;
+  activeBattlePID?: number;
+  activeBattleSlot?: number;
   encounters?: EncounterData;
 }
 
@@ -160,6 +172,85 @@ export const NATURE_NAMES: Record<number, string> = {
   23: "Careful",
   24: "Quirky",
 };
+
+/** Find the active battle Pokemon from the party using the best available identifier. */
+export function getActiveBattlePokemon(state: TrackerState): PartyPokemon | undefined {
+  if (!state.inBattle) return undefined;
+  // Best: direct slot index from Lua (1-indexed, party array is 0-indexed)
+  if (state.activeBattleSlot != null) {
+    const mon = state.party[state.activeBattleSlot - 1];
+    if (mon) return mon;
+  }
+  // Fallback: PID match
+  if (state.activeBattlePID != null) {
+    const mon = state.party.find((p) => p.pid === state.activeBattlePID);
+    if (mon) return mon;
+  }
+  // Last resort: first alive
+  return state.party.find((p) => p.curHP > 0 && p.maxHP > 0);
+}
+
+// ROM-exported trainer data types
+export interface RomTrainerMove {
+  id: number;
+  name: string;
+  type: string;
+  category: string;
+  power: number | string;
+  accuracy: number | string;
+}
+
+export interface RomTrainerPokemon {
+  speciesID: number;
+  name: string;
+  types: string[];
+  level: number;
+  form: number;
+  heldItem: number;
+  heldItemName: string;
+  moves: RomTrainerMove[];
+  ability: string;
+  abilityID: number;
+}
+
+export interface RomTrainer {
+  id: number;
+  trainerClass: number;
+  pokemonCount: number;
+  pokemon: RomTrainerPokemon[];
+  // Present for important trainers (gym leaders, E4, rivals)
+  groupName?: string;
+  name?: string;
+  trainerType?: number; // 0=standard, 1=rival, 2=gym
+  location?: string;
+  badgeNumber?: number;
+}
+
+export interface RomTrainerExport {
+  gameName: string;
+  gen: number;
+  trainerCount: number;
+  exportTimestamp: number;
+  trainers: RomTrainer[];
+}
+
+// ROM-exported evolution data types
+export interface RomEvolution {
+  methodID: number;
+  method: string;
+  param: number;
+  paramName?: string;
+  targetID: number;
+  targetName: string;
+}
+
+export interface RomEvoExport {
+  gameName: string;
+  gen: number;
+  speciesCount: number;
+  exportTimestamp: number;
+  evolutions: Record<string, RomEvolution[]>; // key = speciesID as string
+}
 
 export const STATUS_NAMES: Record<number, string> = {
   0: "None",
